@@ -1,0 +1,11 @@
+{
+  "name": "perch-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Barramento de estado local do perch",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

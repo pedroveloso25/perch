@@ -1,0 +1,84 @@
+{
+  "_comentario": [
+    "Cole o bloco 'hooks' no seu ~/.claude/settings.json (no Windows: C:/Users/<voce>/.claude/settings.json).",
+    "Troque TODOS os caminhos C:/dev/perch pelo caminho real do projeto.",
+    "Use barra normal (/) no caminho: o Node aceita no Windows e evita o inferno de escape de barra invertida em JSON.",
+    "'async': true é obrigatório aqui — sem isso o Claude espera o hook terminar a cada tool call."
+  ],
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/dev/perch/hooks/notify.js\" working",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/dev/perch/hooks/notify.js\" working",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/dev/perch/hooks/notify.js\" tool-done",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/dev/perch/hooks/notify.js\" blocked",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/dev/perch/hooks/notify.js\" stop",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/dev/perch/hooks/notify.js\" end",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

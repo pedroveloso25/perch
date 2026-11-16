@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src pet:; connect-src http://127.0.0.1:4747" />
+<title>Perch</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #stage {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+  }
+
+  /* #pet recebe estado e animação; #sprite é só a imagem. Separados para a
+     troca de imagem (tool mudou) nunca encostar na animação (estado mudou). */
+  #pet {
+    width: 128px;
+    height: 128px;
+    transform-origin: 50% 90%; /* pivô nos "pés": squash parece peso, não zoom */
+    opacity: 0;
+    transition: opacity 320ms ease;
+  }
+  #pet.interactive { cursor: grab; }
+  #pet.dragging    { cursor: grabbing; }
+
+  #sprite {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    -webkit-user-drag: none;
+
+    /* Pixel art NUNCA pode ser interpolada. Sem isto, em escala 125%/150%
+       do Windows o sprite vira borrão. Escale sempre em múltiplo inteiro. */
+    image-rendering: pixelated;
+  }
+
+  /* Placeholder enquanto você não tem arte: some assim que uma imagem carrega */
+  #pet.placeholder {
+    background: #d97757;
+    border-radius: 14px;
+    box-shadow: inset -10px -10px 0 rgba(0,0,0,.14);
+  }
+  #pet.placeholder #sprite { visibility: hidden; }
+
+  /* ----- estados ---------------------------------------------------------
+     A hierarquia visual é o produto inteiro. Visão periférica registra
+     MUDANÇA, não estado. Se "pensando" e "terminou" tiverem a mesma energia,
+     você dessensibiliza e o overlay vira enfeite.                          */
+
+  /* idle: invisível. Nada acontecendo = nada na tela. */
+  #pet.idle { opacity: 0; }
+
+  /* working: lento, baixa amplitude. Presente mas ignorável. */
+  #pet.working {
+    opacity: .85;
+    animation: breathe 2600ms ease-in-out infinite;
+  }
+
+  /* done: pico brusco e curto, depois sustenta. É o evento que te chama. */
+  #pet.done {
+    opacity: 1;
+    animation: pop 520ms cubic-bezier(.2,1.6,.4,1) 2, bob 1100ms ease-in-out 1040ms infinite;
+  }
+
+  /* blocked: o mais agressivo. Está travado esperando VOCÊ. */
+  #pet.blocked {
+    opacity: 1;
+    animation: alert 620ms ease-in-out infinite;
+    filter: drop-shadow(0 0 10px rgba(217,119,87,.95));
+  }
+
+  /* Arrastando: congela a animação para o pet não "fugir" da mão. */
+  #pet.dragging { animation-play-state: paused; }
+
+  @keyframes breathe {
+    0%,100% { transform: translateY(0)     scale(1,    1);    }
+    50%     { transform: translateY(-3px)  scale(.985, 1.015); }
+  }
+  @keyframes bob {
+    0%,100% { transform: translateY(0);    }
+    50%     { transform: translateY(-9px); }
+  }
+  @keyframes pop {
+    0%   { transform: translateY(0)     scale(1,    1);   }
+    35%  { transform: translateY(-26px) scale(.86,  1.2); }
+    70%  { transform: translateY(0)     scale(1.18, .84); }
+    100% { transform: translateY(0)     scale(1,    1);   }
+  }
+  @keyframes alert {
+    0%,100% { transform: rotate(-7deg) translateY(0);    }
+    50%     { transform: rotate( 7deg) translateY(-5px); }
+  }
+</style>
+</head>
+<body>
+  <div id="stage"><div id="pet" class="placeholder idle"><img id="sprite" alt="" /></div></div>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -28,14 +28,19 @@
   #pet.interactive { cursor: grab; }
   #pet.dragging    { cursor: grabbing; }
 
-  /* idle: invisível. Nada acontecendo = nada na tela. */
+  /* idle: invisível. Nada acontecendo = nada na tela. Com o "modo pet"
+     (body.petmode, padrão) ele fica e vive a vida dele (brain.js). */
   #pet.idle    { opacity: 0; }
+  body.petmode #pet.idle { opacity: 1; }
   #pet.working { opacity: .85; }
   #pet.done    { opacity: 1; }
   #pet.blocked {
     opacity: 1;
     filter: drop-shadow(0 0 10px rgba(217,119,87,.95));
   }
+  /* Reação de outra fonte (hooks/perch.js): aparece mesmo no ócio sem modo pet. */
+  #pet.react { opacity: 1; }
+  #pet.react-alert { filter: drop-shadow(0 0 10px rgba(217,119,87,.95)); }
 </style>
 </head>
 <body>

@@ -13,6 +13,8 @@ const canvas = document.getElementById("pet");
    Anthropic. Mantenha-a local e publique o projeto com mascote próprio.) */
 const NAMES = {
   idle:    ["idle", "parado"],
+  sleep:   ["dormindo", "sleeping", "sleep"],
+  walk:    ["andando", "walking", "walk"],
   working: ["working", "pensando", "trabalhando"],
   done:    ["done", "finalizado", "pronto"],
   blocked: ["blocked", "permissao", "bloqueado"],
@@ -29,9 +31,15 @@ const TOOL_NAMES = {
    - idle: invisível. Nada acontecendo = nada na tela.
    - working: lento, baixa amplitude. Presente mas ignorável.
    - done: pico brusco (dois pulos) e depois sustenta. É o evento que te chama.
-   - blocked: o mais agressivo. Está travado esperando VOCÊ. */
+   - blocked: o mais agressivo. Está travado esperando VOCÊ.
+   No ócio com o modo pet, o humor vem da atividade do cérebro (brain.js):
+   parado respira, andando bamboleia, dormindo respira fundo e devagar. */
 const MOODS = {
   idle:    { breathAmp: 0.02, breathHz: 0.25, swayAmp: 0,    swayHz: 0.3, bobAmp: 0, bobHz: 0.5 },
+  rest:    { breathAmp: 0.025, breathHz: 0.25, swayAmp: 0.012, swayHz: 0.22, bobAmp: 0, bobHz: 0.5 },
+  walk:    { breathAmp: 0.02, breathHz: 0.5,  swayAmp: 0.035, swayHz: 1.1, bobAmp: 4, bobHz: 2.2 },
+  sleep:   { breathAmp: 0.055, breathHz: 0.16, swayAmp: 0,   swayHz: 0.2, bobAmp: 0, bobHz: 0.5 },
+  wake:    { breathAmp: 0.04, breathHz: 0.6,  swayAmp: 0.03, swayHz: 0.7, bobAmp: 0, bobHz: 0.5 },
   working: { breathAmp: 0.03, breathHz: 0.38, swayAmp: 0.02, swayHz: 0.3, bobAmp: 0, bobHz: 0.5 },
   done:    { breathAmp: 0.03, breathHz: 0.5,  swayAmp: 0.03, swayHz: 0.8, bobAmp: 9, bobHz: 0.9 },
   blocked: { breathAmp: 0.02, breathHz: 0.8,  swayAmp: 0.12, swayHz: 1.6, bobAmp: 5, bobHz: 1.6 },
@@ -128,13 +136,15 @@ function fitWindow(height) {
 
 // Em ordem: sprite da tool, depois o do estado, depois "pensando", depois
 // qualquer imagem. Um pet só com pensando*.png já funciona em todo estado.
+// No ócio com modo pet, a atividade vem antes: dormindo -> parado -> ...
 function variantsFor(state, tool) {
   const pick = (names) => names.flatMap((n) => groups.get(n) || []);
   if (state === "working" && TOOL_NAMES[tool]) {
     const list = pick(TOOL_NAMES[tool]);
     if (list.length) return list;
   }
-  for (const s of [state, "working"]) {
+  const chain = state === "idle" && petMode && NAMES[activity] ? [activity, "idle", "working"] : [state, "working"];
+  for (const s of chain) {
     const list = pick(NAMES[s]);
     if (list.length) return list;
   }
@@ -165,6 +175,14 @@ function showFile(file) {
 
 let currentState = null;
 let currentTool = null;
+let petMode = true;        // vem do main (bandeja → "Modo pet")
+let activity = "rest";     // vem do main (brain.js): rest | walk | sleep | wake
+
+// Humor do momento: estado do Claude; no ócio com modo pet, a atividade.
+function currentMood() {
+  if (currentState === "idle" && petMode) return MOODS[activity] || MOODS.rest;
+  return MOODS[currentState] || MOODS.idle;
+}
 
 function render({ state, tool }) {
   const changed = state !== currentState;
@@ -175,23 +193,74 @@ function render({ state, tool }) {
   // Comportamento de entrada (pulos do done) só quando o ESTADO muda. Trocar
   // de tool (Read -> Edit) só troca a imagem acima e deixa a animação seguir.
   if (!changed) return;
+  window.overlay.reportState(state); // o cérebro (main) só age no ócio
   canvas.classList.remove(...STATES);
   canvas.classList.add(state);
-  mesh.setMood(MOODS[state] || MOODS.idle);
+  mesh.setMood(currentMood());
   if (state === "done") mesh.hop(2);
-  wake();
+  wakeLoop();
 }
 
+// Mudou a atividade do cérebro (ou o modo pet): imagem e humor do ócio.
+function applyIdleLook(force) {
+  document.body.classList.toggle("petmode", petMode);
+  if (currentState !== "idle") return;
+  choose(variantsFor(currentState, currentTool), force);
+  mesh.setMood(currentMood());
+  wakeLoop();
+}
+
+window.overlay.onActivity((a) => {
+  const prev = activity;
+  activity = a;
+  if (a === "wake" && prev === "sleep" && currentState === "idle") mesh.hop(1); // espreguiça
+  applyIdleLook(true);
+});
+window.overlay.onMode((on) => { petMode = on; applyIdleLook(true); });
+
 setInterval(() => {
-  if (currentState && currentState !== "idle" && !dragging && Date.now() - chosenAt > VARIANT_ROTATE_MS) {
+  const visible = currentState && (currentState !== "idle" || petMode);
+  if (visible && !dragging && Date.now() - chosenAt > VARIANT_ROTATE_MS) {
     const list = variantsFor(currentState, currentTool);
     if (list.length > 1) choose(list, true);
   }
 }, 5000);
 
+/* Reações de outras fontes (daemon → evento SSE "reaction"): um momento de
+   humor emprestado e depois volta ao que era. Pedido de permissão do Claude
+   tem prioridade: ali o pet não comemora nada. */
+const REACTIONS = {
+  celebrate: { mood: "done", hops: 2, ms: 3000 },
+  alert:     { mood: "blocked", hops: 0, ms: 4000, cls: "react-alert" },
+  hello:     { mood: "wake", hops: 1, ms: 1500 },
+};
+let reactTimer = 0;
+let reacting = false;
+
+function react({ kind }) {
+  const r = REACTIONS[kind];
+  if (!r || currentState === "blocked") return;
+  window.overlay.wakePet(); // dormindo, acorda
+  reacting = true;
+  canvas.classList.remove("react-alert");
+  canvas.classList.add("react");
+  if (r.cls) canvas.classList.add(r.cls);
+  mesh.setMood(MOODS[r.mood]);
+  if (r.hops) mesh.hop(r.hops);
+  clearTimeout(reactTimer);
+  reactTimer = setTimeout(() => {
+    reacting = false;
+    canvas.classList.remove("react", "react-alert");
+    mesh.setMood(currentMood());
+    wakeLoop();
+  }, r.ms);
+  wakeLoop();
+}
+
 function connect() {
   const es = new EventSource(`http://127.0.0.1:${PORT}/stream`);
   es.onmessage = (e) => render(JSON.parse(e.data));
+  es.addEventListener("reaction", (e) => react(JSON.parse(e.data)));
   es.onerror = () => {
     es.close();
     render({ state: "idle", tool: null });
@@ -200,7 +269,7 @@ function connect() {
 }
 
 // ---------------------------------------------------------------------------
-// Laço de animação: dorme em idle (o pet está invisível, não há o que animar)
+// Laço de animação: para quando o pet está invisível (ócio sem modo pet)
 // ---------------------------------------------------------------------------
 
 let rafId = 0;
@@ -214,18 +283,20 @@ function loop(now) {
   rafId = requestAnimationFrame(loop);
 }
 
-function wake() {
+function wakeLoop() {
   clearTimeout(sleepTimer);
   if (!rafId) {
     last = performance.now();
     rafId = requestAnimationFrame(loop);
   }
   // Espera o fade-out do CSS (320ms) terminar antes de parar de desenhar.
-  if (currentState === "idle" && !dragging) sleepTimer = setTimeout(sleep, 600);
+  if (invisible()) sleepTimer = setTimeout(parkLoop, 600);
 }
 
-function sleep() {
-  if (currentState !== "idle" || dragging) return;
+const invisible = () => currentState === "idle" && !petMode && !dragging && !reacting;
+
+function parkLoop() {
+  if (!invisible()) return;
   cancelAnimationFrame(rafId);
   rafId = 0;
 }
@@ -274,7 +345,7 @@ window.addEventListener("mousedown", (e) => {
   canvas.classList.add("dragging");
   mesh.grab(e.clientX, e.clientY);
   window.overlay.dragStart();
-  wake();
+  wakeLoop();
 });
 
 // Quem decide se foi clique ou arraste é o main: a janela anda junto com o
@@ -289,7 +360,7 @@ async function endDrag() {
     mesh.poke(downAt.x, downAt.y); // "boop"
     mesh.hop(1);
   }
-  wake();
+  wakeLoop();
 }
 window.addEventListener("mouseup", endDrag);
 window.addEventListener("blur", endDrag);
@@ -299,4 +370,10 @@ window.overlay.onMoved((p) => mesh.frameMoved(p.x, p.y, p.g));
 window.overlay.onLanded((v) => mesh.impact(v));
 window.overlay.onSpritesChanged(refreshSprites);
 
-refreshSprites().then(connect);
+// Modo pet e atividade atuais antes do primeiro estado, para o ócio já
+// nascer com a cara certa.
+window.overlay.getMode()
+  .then((m) => { petMode = m.petMode; activity = m.activity; document.body.classList.toggle("petmode", petMode); })
+  .catch(() => {})
+  .then(refreshSprites)
+  .then(connect);

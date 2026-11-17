@@ -1,5 +1,5 @@
 const {
-  app, BrowserWindow, screen, Tray, Menu, nativeImage, ipcMain, protocol, net, shell, dialog,
+  app, BrowserWindow, screen, Tray, Menu, nativeImage, ipcMain, protocol, net, shell, dialog, powerMonitor,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -7,6 +7,7 @@ const { pathToFileURL } = require("url");
 const { createBody, releaseVelocity, DEFAULTS: PHYSICS } = require("./physics");
 const { createPets } = require("./pets");
 const { writeZip, readZip } = require("./zip");
+const { createBrain } = require("./brain");
 
 // Tamanho inicial da janela em DIP. O renderer pede o tamanho certo
 // (pet:resize) assim que mede as imagens do pet: cabe a maior delas, com
@@ -48,13 +49,19 @@ let drag = null;        // { t0, start: {x,y}, samples: [{t,x,y}] }
 let leaveTimer = null;
 let physTimer = null;
 const body = createBody();
+const brain = createBrain();
+let claudeState = "idle"; // o renderer reporta (pet:claude-state): só ele ouve o daemon
+let screenLocked = false;
+let brainTimer = null;
+let walkTimer = null;
+let lastActivity = null;
 
 // ---------------------------------------------------------------------------
 // Preferências (posição e gravidade)
 // ---------------------------------------------------------------------------
 
 // Arquivo próprio em vez de electron-store: são duas chaves.
-let settings = { gravity: true, feet: null, activePet: "default" };
+let settings = { gravity: true, feet: null, activePet: "default", petMode: true };
 try {
   settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
 } catch {}
@@ -276,7 +283,69 @@ function stopLeaveWatch() {
   leaveTimer = null;
 }
 
+// ---------------------------------------------------------------------------
+// Cérebro (brain.js): no ócio, passeia pela barra e dorme. Aqui só as
+// entradas (estado do Claude, tempo sem input, tela bloqueada, chão) e a
+// execução do passeio; a aparência de cada atividade é do renderer.
+// ---------------------------------------------------------------------------
+
+const BRAIN_TICK_MS = 100;
+
+function brainTick() {
+  if (!win || win.isDestroyed()) return;
+  const area = areaAt(body);
+  const floor = area.y + area.height;
+  const r = brain.update(BRAIN_TICK_MS / 1000, {
+    active: settings.petMode && claudeState === "idle",
+    userIdle: powerMonitor.getSystemIdleTime(),
+    locked: screenLocked,
+    free: !dragTimer && !physTimer && Math.abs(body.y - floor) < 1,
+    x: body.x,
+    minX: area.x + geom.side,
+    maxX: area.x + area.width - geom.side,
+  });
+  if (r.activity !== lastActivity) {
+    lastActivity = r.activity;
+    win.webContents.send("pet:activity", r.activity);
+  }
+  if (r.activity === "walk") startWalk();
+}
+
+function startWalk() {
+  if (walkTimer) return;
+  let last = performance.now();
+  walkTimer = setInterval(() => {
+    if (!win || win.isDestroyed() || brain.activity !== "walk" || dragTimer || physTimer) return stopWalk();
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const x = brain.walkStep(body.x, dt);
+    body.place(x, body.y);
+    moveTo(boundsForFeet(x, body.y)); // a malha sente o arranque e a parada
+  }, PHYSICS_TICK_MS);
+}
+
+function stopWalk() {
+  if (!walkTimer) return;
+  clearInterval(walkTimer);
+  walkTimer = null;
+  settings.feet = { x: body.x, y: body.y };
+  saveSettingsSoon();
+}
+
+function setPetMode(on) {
+  settings.petMode = on;
+  saveSettings();
+  if (win && !win.isDestroyed()) win.webContents.send("pet:mode", on);
+}
+
 function registerIpc() {
+  ipcMain.handle("pet:mode", () => ({ petMode: settings.petMode, activity: brain.activity }));
+  ipcMain.on("pet:wake", (e) => { if (win && e.sender === win.webContents) brain.poke(); });
+  ipcMain.on("pet:claude-state", (e, state) => {
+    if (win && e.sender === win.webContents && typeof state === "string") claudeState = state;
+  });
+
   ipcMain.on("pet:interactive", (_e, on) => {
     if (!win) return;
     win.setIgnoreMouseEvents(!on, { forward: true });
@@ -304,6 +373,7 @@ function registerIpc() {
     if (!win) return;
     stopDrag();
     stopPhysics(); // pegou no ar: para de cair
+    stopWalk();
     const cursor = screen.getCursorScreenPoint();
     const [wx, wy] = win.getPosition();
     const off = { x: cursor.x - wx, y: cursor.y - wy };
@@ -332,6 +402,7 @@ function registerIpc() {
       body.throw(v.vx, v.vy);
     }
     drag = null;
+    if (click) brain.poke();
     settle();
     return { click };
   });
@@ -492,6 +563,12 @@ function rebuildTray() {
       { label: "Editar pet…", click: openCalibrator },
       { label: "Abrir pasta do pet", click: () => shell.openPath(pets.dirOf(active)) },
       {
+        label: "Modo pet (passear e dormir)",
+        type: "checkbox",
+        checked: settings.petMode,
+        click: (item) => setPetMode(item.checked),
+      },
+      {
         label: "Gravidade",
         type: "checkbox",
         checked: settings.gravity,
@@ -518,6 +595,10 @@ app.whenReady().then(() => {
   if (process.argv.includes("--calibrate")) openCalibrator(); // atalho de desenvolvimento
 
   // Monitor plugado/desplugado, resolução, escala ou barra de tarefas mudou.
+  brainTimer = setInterval(brainTick, BRAIN_TICK_MS);
+  powerMonitor.on("lock-screen", () => { screenLocked = true; });
+  powerMonitor.on("unlock-screen", () => { screenLocked = false; });
+
   for (const ev of ["display-added", "display-removed", "display-metrics-changed"])
     screen.on(ev, () => setTimeout(reanchor, 300)); // espera o Windows terminar de rearrumar
 });

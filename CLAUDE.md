@@ -20,9 +20,11 @@ hooks/notify.js ──POST──► daemon/server.js (:4747) ──SSE──► 
                           state.js = regras puras            main.js / preload.js / renderer.js / mesh.js
 ```
 
-- `daemon/state.js`: lógica de estado com relógio injetado e testável (`npm test` em `daemon/`, node:test, 14 testes).
+- `daemon/state.js`: lógica de estado com relógio injetado e testável (`npm test` em `daemon/`, node:test).
+- `daemon/reactions.js`: reações de outras fontes (`{"event":"react","kind":"celebrate|alert|hello"}`), repassadas como evento SSE `reaction` sem tocar no estado. `hooks/perch.js` é o CLI. 19 testes no daemon.
+- `overlay/brain.js`: cérebro no ócio (rest → walk → sleep → wake), puro e testado. O main roda `update()` a cada 100ms com estado do Claude (o renderer reporta via `pet:claude-state`, só ele ouve o daemon), `powerMonitor.getSystemIdleTime()` e tela bloqueada; executa o passeio movendo a janela; manda `pet:activity`. O renderer escolhe imagem (`dormindo`/`andando` → `parado` → `pensando`) e humor (`MOODS.rest/walk/sleep/wake`). `settings.petMode` (padrão true) deixa o pet visível no ócio.
 - `overlay/physics.js`: corpo do pet na tela (pés em DIP): gravidade, arremesso, paredes/chão da workArea, `releaseVelocity`. Puro, `npm test` em `overlay/` (11 testes). O main roda `step()` num timer e move a janela; manda `pet:moved {x,y,g}` (g>0 = queda livre, a malha desconta) e `pet:landed`.
-- `%APPDATA%\perch\settings.json`: `{ gravity, feet: {x,y} }`, salvo ao parar/sair. `pet:drag-end` é `invoke` e devolve `{ click }` (clique = < 4px e < 350ms); o renderer faz `mesh.poke` + `mesh.hop`.
+- `%APPDATA%\perch\settings.json`: `{ gravity, feet: {x,y}, activePet, petMode }`, salvo ao parar/sair. `pet:drag-end` é `invoke` e devolve `{ click }` (clique = < 4px e < 350ms); o renderer faz `mesh.poke` + `mesh.hop`.
 - `overlay/main.js`: janela transparente, protocolo `pet://`, IPC de click-through e arraste, bandeja.
 - `overlay/renderer.js`: estado → humor do mesh + classe CSS (opacidade/brilho), escolha de sprite (nomes PT/EN, variações), mouse.
 - `overlay/mesh.js`: motor de malha (WebGL2). Recorte, personagem (maior ilha opaca), `place()` (pet.json → escala/pés), `windowSize()`, molas, hit-test na malha deformada. Não conhece estados. Também é carregado pelo calibrador.
@@ -62,6 +64,7 @@ esses caminhos. Backup do settings original: `%TEMP%\claude-settings.backup.json
 - `Page.captureScreenshot` TRAVA em janela oculta/encoberta (`document.visibilityState === "hidden"`, comum no calibrador atrás de outras janelas). Use `canvas.toDataURL()` via `Runtime.evaluate`. Com mais de uma janela, escolha o alvo do CDP pela `url` (index.html × calibrate.html).
 - Não deixe `pet.json` de teste na pasta do usuário.
 - O usuário mexe no pet enquanto você testa (aparece como arraste "fantasma" nos logs). Antes de caçar bug de posição, confira se não foi ele.
+- Para testar o ócio (passeio, sono), suba o overlay SEM o daemon: com ele no ar, os seus próprios hooks deixam o estado em "working" o tempo todo. Se o pet já nasce dormindo, é porque o usuário está longe do teclado há mais de 2 min (confira com `GetLastInputInfo`).
 - Teste com mouse real: peça ao renderer um ponto opaco (`mesh.hitTest` varrendo a janela) em vez de chutar coordenadas.
 - Ao terminar, encerre o electron e o daemon que você subiu.
 
@@ -85,7 +88,7 @@ renderer, substituindo ou somando as transforms CSS atuais.
 
 **Fase 3 (concluída):** editor de pet com importação de imagens (remoção de fundo por preenchimento a partir das bordas — escolha do usuário: sem dependência; `@imgly` foi descartado por ser AGPL), vários pets, zip. Soltar imagem direto no pet do overlay NÃO funciona (janela atravessável não recebe drop): o caminho é o editor. Exportar/importar .zip foi testado só nos testes unitários (o diálogo nativo não dá para automatizar).
 
-**Fase 4:** cérebro do pet (idle → wander pela barra → sleep → react) e fontes de evento plugáveis via daemon (o Claude Code é uma delas).
+**Fase 4 (concluída):** cérebro (parado/passeia/dorme/acorda, modo pet na bandeja, padrão visível) e reações de outras fontes (`hooks/perch.js`). Testado: passeio real (~70 px/s, pausas, fica no chão), parado com o Claude trabalhando, acorda com input, reações via CLI. O usuário vai fornecer `dormindo.png`.
 
 **Fase 5:** `electron-builder`, autostart, tela de config. Avaliar Tauri v2 depois que o motor de animação estabilizar.
 

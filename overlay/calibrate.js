@@ -294,6 +294,8 @@ const PET_STATES = [
   ["permissao", "Precisando de permissão"],
   ["finalizado", "Finalizado"],
   ["parado", "Parado (opcional)"],
+  ["dormindo", "Dormindo (modo pet)"],
+  ["andando", "Andando (modo pet, opcional)"],
   ["lendo", "Lendo (Read, Grep, Glob)"],
   ["terminal", "Terminal (Bash)"],
   ["editando", "Editando (Edit, Write)"],

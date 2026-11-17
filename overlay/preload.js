@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld("overlay", {
   onMouseLeft: (fn) => ipcRenderer.on("pet:mouse-left", () => fn()),
   onMoved: (fn) => ipcRenderer.on("pet:moved", (_e, p) => fn(p)),     // { x, y, g }
   onLanded: (fn) => ipcRenderer.on("pet:landed", (_e, v) => fn(v)),   // velocidade de pouso
+  // Cérebro (Fase 4): o main decide a atividade no ócio; o renderer reporta o estado do Claude.
+  getMode: () => ipcRenderer.invoke("pet:mode"),                      // { petMode, activity }
+  onMode: (fn) => ipcRenderer.on("pet:mode", (_e, on) => fn(on)),
+  onActivity: (fn) => ipcRenderer.on("pet:activity", (_e, a) => fn(a)), // rest | walk | sleep | wake
+  reportState: (state) => ipcRenderer.send("pet:claude-state", state),
+  wakePet: () => ipcRenderer.send("pet:wake"),                        // reação externa acorda o pet
   listSprites: () => ipcRenderer.invoke("pet:list"),          // { pet, files: [{ name, mtime }] }
   // Editor de pet. Os que mudam algo devolvem { ok } ou { error: mensagem }.
   listPets: () => ipcRenderer.invoke("pet:pets"),              // { active, pets: [nome] }

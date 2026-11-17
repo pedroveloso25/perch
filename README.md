@@ -15,7 +15,7 @@ hooks do Claude Code ──POST──► daemon (:4747) ──SSE──► overl
 
 | Estado    | Dispara em                      | Leitura visual                  |
 |-----------|---------------------------------|---------------------------------|
-| `idle`    | nada ativo                      | invisível                       |
+| `idle`    | nada ativo                      | modo pet: vive a vida dele (abaixo); sem modo pet: invisível |
 | `working` | `UserPromptSubmit`, `PreToolUse`| respiração lenta, 85% opacidade |
 |           | (`PostToolUse` só renova o TTL) |                                 |
 | `done`    | `Stop` da última sessão ativa   | pulo brusco, depois bob         |
@@ -25,6 +25,43 @@ hooks do Claude Code ──POST──► daemon (:4747) ──SSE──► overl
 input" é descartada pelo `notify.js`: o turno já acabou, não é bloqueio.
 
 `blocked` tem precedência sobre `working`: é o único que exige ação sua agora.
+
+### Modo pet (padrão)
+
+No ócio o pet fica na tela e tem rotina própria (`overlay/brain.js`): fica
+parado um tempo, às vezes passeia pela barra de tarefas e **dorme** quando
+você fica 2 minutos sem mexer no computador ou bloqueia a tela. Acorda quando
+você volta, quando você clica nele ou quando o Claude começa a trabalhar.
+Trabalhando, pedindo permissão ou comemorando, ele fica parado no lugar e
+reage como na tabela. Imagens próprias: `dormindo.png` e (opcional)
+`andando.png`; faltando, usa `parado`/`pensando` com outra animação
+(dormindo = respiração lenta e funda). Bandeja → **Modo pet** desliga: volta
+a sumir no ócio.
+
+### Outras fontes de evento
+
+O Claude Code é só a primeira fonte. Qualquer script chama o pet:
+
+```
+node hooks/perch.js celebrate     # comemora (dois pulos)
+node hooks/perch.js alert         # chama atenção (balança e brilha 4 s)
+node hooks/perch.js hello         # um pulinho
+
+npm test && node hooks/perch.js celebrate || node hooks/perch.js alert
+```
+
+Por baixo é um POST no daemon, então qualquer linguagem serve:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:4747/event `
+  -ContentType application/json -Body '{"event":"react","kind":"celebrate","source":"build"}'
+```
+
+Reação é instantânea e não mexe no estado do Claude (pedido de permissão tem
+prioridade: ali o pet não comemora). Rajadas viram uma só (mínimo de 500ms
+entre reações). Uma fonte que queira um estado contínuo ("trabalhando" até
+terminar) pode usar os mesmos eventos de sessão dos hooks (`working`,
+`stop`...) com um `session_id` próprio.
 
 ## Instalação (Windows)
 
@@ -222,7 +259,7 @@ daemon também só emite em mudança, mas isso agora é economia, não requisito
 
 ## Próximos passos óbvios
 
-1. Cérebro do pet (passear pela barra, dormir) e fontes de evento plugáveis.
+1. Empacotar (`electron-builder`), iniciar com o Windows, tela de configuração.
 2. Remoção de fundo por IA local para fotos (modelo Apache/MIT; evitar
    `@imgly/background-removal`, que é AGPL).
 3. Porte para Tauri v2 (~30MB de RAM contra ~180MB).

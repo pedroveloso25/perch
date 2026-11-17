@@ -1,21 +1,25 @@
 /**
  * perch-daemon — barramento de estado local.
  *
- * Recebe eventos dos hooks do Claude Code (POST /event) e transmite o estado
- * derivado para o overlay via SSE (GET /stream).
- *
- * As regras de transição moram em state.js; aqui é só HTTP e relógio.
+ * Recebe eventos (POST /event) e transmite para o overlay via SSE (GET /stream):
+ * - sessões (hooks do Claude Code ou qualquer fonte com session_id): estado
+ *   derivado, regras em state.js;
+ * - reações ({"event":"react","kind":...}, ver reactions.js): repassadas
+ *   como evento SSE "reaction", sem mexer no estado. É o ponto de entrada
+ *   para outras fontes (scripts, CI, timers) — hooks/perch.js.
  *
  * Zero dependências. Node 18+.
  */
 
 const http = require("http");
 const { createState } = require("./state");
+const { createReactions } = require("./reactions");
 
 const PORT = Number(process.env.PERCH_PORT || 4747);
 const SWEEP_MS = 5_000;
 
 const state = createState();
+const reactions = createReactions();
 let lastBroadcast = null;
 const clients = new Set();
 
@@ -34,6 +38,12 @@ function broadcast() {
     res.write(frame);
   }
   log(`state -> ${payload.state}${payload.tool ? ` (${payload.tool})` : ""}`);
+}
+
+function broadcastReaction(reaction) {
+  const frame = `event: reaction\ndata: ${JSON.stringify(reaction)}\n\n`;
+  for (const res of clients) res.write(frame);
+  log(`reação ${reaction.kind} (fonte: ${reaction.source})`);
 }
 
 function log(msg) {
@@ -92,7 +102,13 @@ const server = http.createServer((req, res) => {
     });
     req.on("end", () => {
       try {
-        const ok = state.handle(JSON.parse(body || "{}"));
+        const msg = JSON.parse(body || "{}");
+        const r = reactions.handle(msg);
+        if (r) {
+          if (r.reaction) broadcastReaction(r.reaction);
+          return res.writeHead(r.ok ? 204 : 400).end();
+        }
+        const ok = state.handle(msg);
         if (ok) broadcast();
         res.writeHead(ok ? 204 : 400).end();
       } catch {

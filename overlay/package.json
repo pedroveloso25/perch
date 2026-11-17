@@ -6,9 +6,55 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test"
+    "test": "node --test",
+    "dist": "electron-builder --win nsis",
+    "assets": "electron tools/make-assets.js"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "author": "Pedro Veloso",
+  "build": {
+    "appId": "dev.perch.desktoppet",
+    "productName": "Perch",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "*.js",
+      "*.html",
+      "assets/**",
+      "!*.test.js",
+      "!tools/**",
+      "!dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../daemon",
+        "to": "daemon",
+        "filter": [
+          "*.js",
+          "!*.test.js"
+        ]
+      },
+      {
+        "from": "../hooks",
+        "to": "hooks",
+        "filter": [
+          "notify.js",
+          "perch.js"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "Perch"
+    }
   }
 }

@@ -90,3 +90,12 @@ test("chão estreito demais: não passeia", () => {
   const b = createBrain({ rng: seq(0, 0.1, 0.9) });
   assert.equal(run(b, 60, { ...FLOOR, minX: 450, maxX: 550 }).activity, "rest");
 });
+
+test("configure: sono mais cedo e ninguém passeia", () => {
+  const b = createBrain({ rng: seq(0, 0.1, 0.9) });
+  b.configure({ sleepAfter: 30, walkChance: 0, lixo: 1, restMin: "x" });
+  assert.equal(run(b, 1, { ...FLOOR, userIdle: 40 }).activity, "sleep");
+  const c = createBrain({ rng: seq(0, 0.1, 0.9) });
+  c.configure({ walkChance: 0 });
+  assert.equal(run(c, 60).activity, "rest");
+});

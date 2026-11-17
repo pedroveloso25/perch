@@ -2,12 +2,24 @@ const {
   app, BrowserWindow, screen, Tray, Menu, nativeImage, ipcMain, protocol, net, shell, dialog, powerMonitor,
 } = require("electron");
 const fs = require("fs");
+const os = require("os");
+const { spawnSync } = require("child_process");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const { createBody, releaseVelocity, DEFAULTS: PHYSICS } = require("./physics");
 const { createPets } = require("./pets");
 const { writeZip, readZip } = require("./zip");
 const { createBrain } = require("./brain");
+const claudeHooks = require("./claude-hooks");
+
+// Instalado, daemon e hooks ficam em resources/ (fora do .asar: o notify.js
+// precisa ser um arquivo de verdade para o Node do Claude Code executar).
+const RES = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..");
+const DAEMON_DIR = path.join(RES, "daemon");
+const HOOKS_DIR = path.join(RES, "hooks");
+const NOTIFY_JS = path.join(HOOKS_DIR, "notify.js");
+const CLAUDE_SETTINGS = path.join(os.homedir(), ".claude", "settings.json");
+const ASSETS = path.join(__dirname, "assets");
 
 // Tamanho inicial da janela em DIP. O renderer pede o tamanho certo
 // (pet:resize) assim que mede as imagens do pet: cabe a maior delas, com
@@ -61,7 +73,10 @@ let lastActivity = null;
 // ---------------------------------------------------------------------------
 
 // Arquivo próprio em vez de electron-store: são duas chaves.
-let settings = { gravity: true, feet: null, activePet: "default", petMode: true };
+let settings = {
+  gravity: true, feet: null, activePet: "default", petMode: true,
+  sleepAfterMin: 2, walkiness: "normal", seededBird: false,
+};
 try {
   settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
 } catch {}
@@ -339,6 +354,183 @@ function setPetMode(on) {
   if (win && !win.isDestroyed()) win.webContents.send("pet:mode", on);
 }
 
+// "Passeios" na tela de configurações -> parâmetros do cérebro.
+const WALKINESS = {
+  raros: { walkChance: 0.3, restMin: 15, restMax: 45 },
+  normal: { walkChance: 0.6, restMin: 6, restMax: 20 },
+  frequentes: { walkChance: 0.85, restMin: 3, restMax: 10 },
+};
+function applyBrainSettings() {
+  brain.configure({ sleepAfter: settings.sleepAfterMin * 60, ...(WALKINESS[settings.walkiness] || WALKINESS.normal) });
+}
+
+// ---------------------------------------------------------------------------
+// Daemon embutido: o app instalado é um processo só. Se a porta já tem um
+// daemon (o de desenvolvimento, `node server.js`), usa aquele.
+// ---------------------------------------------------------------------------
+
+let daemonStatus = "iniciando";
+function startEmbeddedDaemon() {
+  try {
+    const { startDaemon } = require(path.join(DAEMON_DIR, "server.js"));
+    const log = app.isPackaged ? () => {} : (m) => console.log("[daemon] " + m);
+    startDaemon({ log })
+      .then(() => { daemonStatus = "rodando dentro do app"; })
+      .catch((err) => {
+        daemonStatus = err.code === "EADDRINUSE" ? "usando um daemon que já estava rodando" : "erro: " + err.message;
+      });
+  } catch (err) {
+    daemonStatus = "erro: " + err.message;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Passarinho de fábrica (assets/passarinho, desenhado em tools/bird.js).
+// Uma vez só: se a pessoa apagar o pet, ele não volta. Vira o ativo só se o
+// pet ativo não tem nenhuma imagem (instalação nova); pets existentes não são
+// tocados.
+// ---------------------------------------------------------------------------
+
+function seedDefaultPet() {
+  if (settings.seededBird) return;
+  try {
+    const src = path.join(ASSETS, "passarinho");
+    if (!pets.exists("Passarinho")) {
+      const dst = pets.ensure("Passarinho");
+      for (const f of fs.readdirSync(src))
+        if (f.endsWith(".png")) fs.writeFileSync(path.join(dst, f), fs.readFileSync(path.join(src, f)));
+    }
+    if (!pets.files(activePet()).length) settings.activePet = "Passarinho";
+    settings.seededBird = true;
+    saveSettings();
+  } catch (err) {
+    console.error("passarinho de fábrica:", err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Iniciar com o Windows: só no app instalado (em desenvolvimento registraria
+// o electron.exe do node_modules).
+// ---------------------------------------------------------------------------
+
+const autostartAvailable = app.isPackaged;
+const getAutostart = () => autostartAvailable && app.getLoginItemSettings().openAtLogin;
+function setAutostart(on) {
+  if (autostartAvailable) app.setLoginItemSettings({ openAtLogin: !!on });
+}
+
+// ---------------------------------------------------------------------------
+// Hooks do Claude Code (claude-hooks.js decide o conteúdo; aqui só ler,
+// fazer backup e gravar).
+// ---------------------------------------------------------------------------
+
+function readClaudeSettings() {
+  if (!fs.existsSync(CLAUDE_SETTINGS)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, "utf8"));
+  } catch {
+    throw new Error("o ~/.claude/settings.json não é um JSON válido; corrija à mão antes de conectar");
+  }
+}
+
+function writeClaudeSettings(obj) {
+  fs.mkdirSync(path.dirname(CLAUDE_SETTINGS), { recursive: true });
+  let backup = null;
+  if (fs.existsSync(CLAUDE_SETTINGS)) {
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+    backup = `${CLAUDE_SETTINGS}.perch-backup-${stamp}`;
+    fs.copyFileSync(CLAUDE_SETTINGS, backup);
+  }
+  fs.writeFileSync(CLAUDE_SETTINGS, JSON.stringify(obj, null, 2) + "\n");
+  return backup;
+}
+
+function claudeStatus() {
+  try {
+    return { ...claudeHooks.status(readClaudeSettings(), NOTIFY_JS), file: CLAUDE_SETTINGS };
+  } catch (err) {
+    return { state: "error", error: err.message, file: CLAUDE_SETTINGS };
+  }
+}
+
+// Os hooks rodam "node notify.js": sem Node no PATH, conectar não adianta.
+let nodeOk = null;
+function hasNode() {
+  if (nodeOk === null) {
+    const r = spawnSync("node", ["--version"], { timeout: 3000, windowsHide: true, shell: true });
+    nodeOk = r.status === 0;
+  }
+  return nodeOk;
+}
+
+// ---------------------------------------------------------------------------
+// Janela de configurações
+// ---------------------------------------------------------------------------
+
+let settingsWin = null;
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) return settingsWin.focus();
+  settingsWin = new BrowserWindow({
+    width: 640,
+    height: 720,
+    title: "Perch · configurações",
+    autoHideMenuBar: true,
+    backgroundColor: "#14161f",
+    icon: path.join(ASSETS, "icon.png"),
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false },
+  });
+  settingsWin.loadFile(path.join(__dirname, "settings.html"));
+}
+
+function configSnapshot() {
+  return {
+    petMode: settings.petMode,
+    gravity: settings.gravity,
+    sleepAfterMin: settings.sleepAfterMin,
+    walkiness: settings.walkiness,
+    autostart: getAutostart(),
+    autostartAvailable,
+    claude: claudeStatus(),
+    notifyPath: NOTIFY_JS.replace(/\\/g, "/"),
+    perchCli: path.join(HOOKS_DIR, "perch.js").replace(/\\/g, "/"),
+    nodeOk: hasNode(),
+    daemon: daemonStatus,
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+  };
+}
+
+function registerConfigIpc() {
+  const guard = (fn) => async (_e, ...args) => {
+    try { return { ok: await fn(...args) }; } catch (err) { return { error: err.message }; }
+  };
+  ipcMain.handle("cfg:get", () => configSnapshot());
+  ipcMain.handle("cfg:set", guard((patch) => {
+    if (typeof patch?.petMode === "boolean") setPetMode(patch.petMode);
+    if (typeof patch?.gravity === "boolean") { settings.gravity = patch.gravity; reanchor(); }
+    if (Number.isFinite(patch?.sleepAfterMin)) settings.sleepAfterMin = Math.min(60, Math.max(1, Math.round(patch.sleepAfterMin)));
+    if (WALKINESS[patch?.walkiness]) settings.walkiness = patch.walkiness;
+    if (typeof patch?.autostart === "boolean") setAutostart(patch.autostart);
+    applyBrainSettings();
+    saveSettings();
+    rebuildTray();
+    return configSnapshot();
+  }));
+  ipcMain.handle("cfg:claude", guard((action) => {
+    const current = readClaudeSettings();
+    const next = action === "connect" ? claudeHooks.install(current, NOTIFY_JS)
+      : action === "disconnect" ? claudeHooks.uninstall(current) : null;
+    if (!next) throw new Error("ação inválida");
+    const backup = writeClaudeSettings(next);
+    return { backup, snapshot: configSnapshot() };
+  }));
+  ipcMain.handle("cfg:open", (_e, what) => {
+    if (what === "editor") openCalibrator();
+    else if (what === "pets") shell.openPath(PETS_DIR);
+    else if (what === "claude") shell.showItemInFolder(CLAUDE_SETTINGS);
+  });
+}
+
 function registerIpc() {
   ipcMain.handle("pet:mode", () => ({ petMode: settings.petMode, activity: brain.activity }));
   ipcMain.on("pet:wake", (e) => { if (win && e.sender === win.webContents) brain.poke(); });
@@ -524,9 +716,12 @@ function watchPetDir() {
   } catch {}
 }
 
-// Quadrado laranja 16x16 gerado em memória. nativeImage.createEmpty() deixava
-// o ícone invisível na bandeja — e a bandeja é a única forma de fechar o app.
+// Ícone da bandeja: o passarinho. Se o arquivo faltar, um quadrado laranja
+// gerado em memória — nativeImage.createEmpty() deixava o ícone invisível, e
+// a bandeja é a única forma de fechar o app.
 function trayIcon() {
+  const img = nativeImage.createFromPath(path.join(ASSETS, "tray.png"));
+  if (!img.isEmpty()) return img.resize({ width: 16, height: 16, quality: "best" });
   const n = 16;
   const buf = Buffer.alloc(n * n * 4);
   for (let y = 0; y < n; y++) {
@@ -561,6 +756,7 @@ function rebuildTray() {
         })),
       },
       { label: "Editar pet…", click: openCalibrator },
+      { label: "Configurações…", click: openSettings },
       { label: "Abrir pasta do pet", click: () => shell.openPath(pets.dirOf(active)) },
       {
         label: "Modo pet (passear e dormir)",
@@ -586,18 +782,24 @@ function rebuildTray() {
 }
 
 app.whenReady().then(() => {
+  startEmbeddedDaemon();
   pets.ensure("default");
+  seedDefaultPet();
+  applyBrainSettings();
   registerPetProtocol();
   registerIpc();
+  registerConfigIpc();
   createWindow();
   watchPetDir();
   createTray();
   if (process.argv.includes("--calibrate")) openCalibrator(); // atalho de desenvolvimento
+  if (process.argv.includes("--settings")) openSettings();
 
-  // Monitor plugado/desplugado, resolução, escala ou barra de tarefas mudou.
   brainTimer = setInterval(brainTick, BRAIN_TICK_MS);
   powerMonitor.on("lock-screen", () => { screenLocked = true; });
   powerMonitor.on("unlock-screen", () => { screenLocked = false; });
+
+  // Monitor plugado/desplugado, resolução, escala ou barra de tarefas mudou.
 
   for (const ev of ["display-added", "display-removed", "display-metrics-changed"])
     screen.on(ev, () => setTimeout(reanchor, 300)); // espera o Windows terminar de rearrumar

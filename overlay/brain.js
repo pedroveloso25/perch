@@ -97,6 +97,11 @@ function createBrain(opts = {}) {
       return { activity, target };
     },
 
+    /** Ajustes da tela de Configurações (sleepAfter, walkChance, restMin/Max...). */
+    configure(next) {
+      for (const k of Object.keys(DEFAULTS)) if (Number.isFinite(next?.[k])) o[k] = next[k];
+    },
+
     /** Um passo de caminhada: nova posição x, sem passar do destino. */
     walkStep(x, dt) {
       if (activity !== "walk" || target == null) return x;

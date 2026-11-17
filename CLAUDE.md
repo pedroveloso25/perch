@@ -21,11 +21,14 @@ hooks/notify.js ──POST──► daemon/server.js (:4747) ──SSE──► 
 ```
 
 - `daemon/state.js`: lógica de estado com relógio injetado e testável (`npm test` em `daemon/`, node:test).
-- `daemon/reactions.js`: reações de outras fontes (`{"event":"react","kind":"celebrate|alert|hello"}`), repassadas como evento SSE `reaction` sem tocar no estado. `hooks/perch.js` é o CLI. 19 testes no daemon.
+- `daemon/reactions.js`: reações de outras fontes (`{"event":"react","kind":"celebrate|alert|hello"}`), repassadas como evento SSE `reaction` sem tocar no estado. `hooks/perch.js` é o CLI. 21 testes no daemon (inclui `server.test.js`, que sobe o servidor de verdade).
 - `overlay/brain.js`: cérebro no ócio (rest → walk → sleep → wake), puro e testado. O main roda `update()` a cada 100ms com estado do Claude (o renderer reporta via `pet:claude-state`, só ele ouve o daemon), `powerMonitor.getSystemIdleTime()` e tela bloqueada; executa o passeio movendo a janela; manda `pet:activity`. O renderer escolhe imagem (`dormindo`/`andando` → `parado` → `pensando`) e humor (`MOODS.rest/walk/sleep/wake`). `settings.petMode` (padrão true) deixa o pet visível no ócio.
 - `overlay/physics.js`: corpo do pet na tela (pés em DIP): gravidade, arremesso, paredes/chão da workArea, `releaseVelocity`. Puro, `npm test` em `overlay/` (11 testes). O main roda `step()` num timer e move a janela; manda `pet:moved {x,y,g}` (g>0 = queda livre, a malha desconta) e `pet:landed`.
-- `%APPDATA%\perch\settings.json`: `{ gravity, feet: {x,y}, activePet, petMode }`, salvo ao parar/sair. `pet:drag-end` é `invoke` e devolve `{ click }` (clique = < 4px e < 350ms); o renderer faz `mesh.poke` + `mesh.hop`.
-- `overlay/main.js`: janela transparente, protocolo `pet://`, IPC de click-through e arraste, bandeja.
+- `%APPDATA%\perch\settings.json`: `{ gravity, feet: {x,y}, activePet, petMode, sleepAfterMin, walkiness, seededBird }`, salvo ao parar/sair. `pet:drag-end` é `invoke` e devolve `{ click }` (clique = < 4px e < 350ms); o renderer faz `mesh.poke` + `mesh.hop`.
+- `overlay/main.js`: janela transparente, protocolo `pet://`, IPC de click-through e arraste, bandeja, daemon embutido (`startDaemon` de `daemon/server.js`; EADDRINUSE = usa o daemon que já está na porta), passarinho de fábrica (`seedDefaultPet`, uma vez só: `settings.seededBird`), configurações (`cfg:*`), autostart (`setLoginItemSettings`, só empacotado).
+- `overlay/claude-hooks.js`: liga/desliga os hooks no `~/.claude/settings.json` (puro, testado). Hook "do perch" = comando que roda um notify.js dentro de uma pasta chamada perch. O main faz backup (`settings.json.perch-backup-<data>`) antes de gravar.
+- `overlay/settings.html/.js`: janela "Configurações…" (ou `npx electron . --settings`).
+- Empacotamento: `npm run dist` em `overlay/` (electron-builder, NSIS por usuário). Daemon e hooks vão em `resources/` FORA do asar (`extraResources`): o notify.js roda no Node do Claude Code. Mascote: `overlay/assets/`, gerado por `npm run assets` (`tools/bird.js`, arte própria). Ícone da bandeja = `assets/tray.png`.
 - `overlay/renderer.js`: estado → humor do mesh + classe CSS (opacidade/brilho), escolha de sprite (nomes PT/EN, variações), mouse.
 - `overlay/mesh.js`: motor de malha (WebGL2). Recorte, personagem (maior ilha opaca), `place()` (pet.json → escala/pés), `windowSize()`, molas, hit-test na malha deformada. Não conhece estados. Também é carregado pelo calibrador.
 - Editor de pet (bandeja "Editar pet…", ou `npx electron . --calibrate`): `calibrate.html` + `calibrate.js` (palco, tamanho/chão, cartões com estado e Lixeira) + `editor.js` (pet ativo, novo pet, zip, tela de importação). Erros dos IPCs do editor voltam como `{ error }`; use `flash()` para mostrá-los (o `updateStatus` esconde mensagem quando há alteração pendente).
@@ -90,9 +93,11 @@ renderer, substituindo ou somando as transforms CSS atuais.
 
 **Fase 4 (concluída):** cérebro (parado/passeia/dorme/acorda, modo pet na bandeja, padrão visível) e reações de outras fontes (`hooks/perch.js`). Testado: passeio real (~70 px/s, pausas, fica no chão), parado com o Claude trabalhando, acorda com input, reações via CLI. O usuário vai fornecer `dormindo.png`.
 
-**Fase 5:** `electron-builder`, autostart, tela de config. Avaliar Tauri v2 depois que o motor de animação estabilizar.
+**Fase 5 (concluída):** instalador NSIS (78 MB, não assinado), daemon embutido, configurações, autostart, conectar ao Claude Code, Passarinho de fábrica. Testado: app empacotado (`dist/win-unpacked/Perch.exe`) sobe o daemon, carrega os pets, perch.js de resources chega no daemon, status "other" com os hooks ainda no repo. NÃO testado: rodar o instalador, clicar Conectar (regravaria o settings do usuário) e ligar o autostart (escreve no registro). O usuário vai instalar e conectar.
+- Build: o `winCodeSign` do electron-builder falha sem Modo de Desenvolvedor (symlinks de macOS). Contorno usado: extrair o .7z em `Cache/winCodeSign/winCodeSign-2.6.0` aceitando o erro dos 2 symlinks.
+- Avaliar Tauri v2 depois (instalador ~78 MB e ~180 MB de RAM com Electron).
 
 ## Limitações conhecidas
 
 - Não desenha sobre fullscreen exclusivo (limitação do Windows).
-- Multi-monitor e DPI misto: código pronto (`areaAt`, `reanchor`, `devicePixelRatio` no resize da malha), nunca testado com 2 monitores.
+- Multi-monitor: código pronto (`areaAt`, `reanchor`), nunca testado com 2 monitores. Troca de escala (100% → 125%) testada sem querer: o pet se reancorou no chão novo e a malha acompanhou o `devicePixelRatio`.

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'" />
+<title>Perch · configurações</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font: 13px/1.5 system-ui, sans-serif; color: #e8eaf0; background: #14161f; padding: 18px 22px 26px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  header img { width: 48px; height: 48px; }
+  header h1 { font-size: 17px; margin: 0; }
+  header small { color: #8a90a3; }
+  section { border: 1px solid #2c3142; border-radius: 10px; background: #1a1d29; padding: 12px 16px; margin: 14px 0; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8fa8ff; margin: 0 0 8px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .row > span:first-child { flex: 1; }
+  .hint { color: #8a90a3; font-size: 12px; margin: 2px 0 6px; }
+  label.check { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; cursor: pointer; }
+  label.check input { margin-top: 3px; }
+  input[type=range] { accent-color: #6f8dff; width: 200px; }
+  output { min-width: 56px; display: inline-block; text-align: right; font-variant-numeric: tabular-nums; }
+  button, select {
+    font: inherit; color: #e8eaf0; background: #2a2f40; border: 1px solid #3c4359;
+    border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { background: #343a50; }
+  button.primary { background: #4b63c9; border-color: #6f8dff; }
+  button:disabled { opacity: .45; cursor: default; }
+  .status { padding: 8px 10px; border-radius: 8px; margin: 6px 0 10px; background: #22263a; }
+  .status.ok { background: #1d3a2c; color: #9ff0c3; }
+  .status.warn { background: #3b3220; color: #ffd98a; }
+  .status.err { background: #3d1f26; color: #ff9fae; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  pre { background: #11131b; border: 1px solid #262a38; border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; word-break: break-all; user-select: text; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  #msg { min-height: 1.5em; color: #9ff0c3; }
+  #msg.err { color: #ff9fae; }
+  footer { color: #6c7286; font-size: 12px; }
+</style>
+</head>
+<body>
+  <header>
+    <img src="assets/icon.png" alt="">
+    <div><h1>Perch</h1><small id="version"></small></div>
+  </header>
+
+  <section>
+    <h2>Pet</h2>
+    <label class="check"><input type="checkbox" id="petMode">
+      <span>Modo pet<br><span class="hint">No ócio ele fica na tela, passeia e dorme. Desligado, some quando o Claude não está fazendo nada.</span></span></label>
+    <div class="row"><span>Dormir depois de</span>
+      <input type="range" id="sleepAfterMin" min="1" max="30" step="1"><output id="sleepOut"></output></div>
+    <div class="row"><span>Passeios</span>
+      <select id="walkiness">
+        <option value="raros">Raros</option>
+        <option value="normal">Normais</option>
+        <option value="frequentes">Frequentes</option>
+      </select></div>
+    <label class="check"><input type="checkbox" id="gravity">
+      <span>Gravidade<br><span class="hint">Solto no ar, cai até a barra de tarefas. Desligado, fica onde você soltar.</span></span></label>
+    <div class="buttons"><button id="openEditor">Editar pet…</button><button id="openPets">Abrir pasta dos pets</button></div>
+  </section>
+
+  <section>
+    <h2>Claude Code</h2>
+    <div id="claudeStatus" class="status"></div>
+    <div class="buttons">
+      <button id="connect" class="primary">Conectar ao Claude Code</button>
+      <button id="disconnect">Desconectar</button>
+      <button id="showClaude">Mostrar settings.json</button>
+    </div>
+    <p class="hint">Conectar adiciona só os hooks do perch no <span class="mono">~/.claude/settings.json</span> (o resto do arquivo fica igual) e faz um backup antes. Sessões do Claude já abertas passam a avisar o pet na próxima sessão.</p>
+  </section>
+
+  <section>
+    <h2>Sistema</h2>
+    <label class="check"><input type="checkbox" id="autostart">
+      <span>Iniciar com o Windows<br><span class="hint" id="autostartHint">O pet precisa estar aberto para reagir ao Claude.</span></span></label>
+    <p class="hint">Daemon: <span id="daemon"></span></p>
+  </section>
+
+  <section>
+    <h2>Outras fontes de evento</h2>
+    <p class="hint">Qualquer script pode chamar o pet (comemorar, chamar atenção, dar oi):</p>
+    <pre id="cli"></pre>
+  </section>
+
+  <p id="msg"></p>
+  <footer>Pets, posição e preferências ficam em %APPDATA%\perch.</footer>
+  <script src="settings.js"></script>
+</body>
+</html>

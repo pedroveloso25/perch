@@ -65,9 +65,33 @@ terminar) pode usar os mesmos eventos de sessão dos hooks (`working`,
 
 ## Instalação (Windows)
 
-Pré-requisito: Node 18+.
+### App instalado (o jeito normal)
 
-**1. Daemon**
+1. Gere o instalador (ou baixe de uma release): em `overlay/`,
+   `npm install` e `npm run dist` → `overlay/dist/Perch Setup <versão>.exe`.
+2. Rode o instalador. Ele instala só para o seu usuário (sem administrador) em
+   `%LOCALAPPDATA%\Programs\Perch`. Não é assinado: o Windows SmartScreen
+   avisa na primeira vez ("Mais informações" → "Executar assim mesmo").
+3. Bandeja → **Configurações…** → **Conectar ao Claude Code**. Isso adiciona
+   os hooks no `~/.claude/settings.json` (só os do perch; backup antes) e
+   precisa do Node.js instalado (os hooks rodam `node notify.js`).
+4. Opcional: **Iniciar com o Windows**, na mesma tela.
+
+O app já traz o daemon dentro (não precisa subir nada) e um pet de fábrica,
+o **Passarinho**. Para usar o seu: bandeja → **Editar pet…**.
+
+Gerar o instalador pela primeira vez pode falhar com "Cannot create symbolic
+link" ao extrair o `winCodeSign` (dois atalhos de macOS que o Windows só
+cria com o Modo de Desenvolvedor). Ligue o Modo de Desenvolvedor, ou extraia
+o `.7z` baixado em `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0`
+ignorando esses dois erros, e rode `npm run dist` de novo.
+
+### Desenvolvimento
+
+Pré-requisito: Node 18+. O overlay sobe o daemon sozinho; rodar o daemon à
+parte só é útil para ver o log dele (o app usa o que já estiver na porta).
+
+**1. Daemon (opcional)**
 
 ```powershell
 cd C:\dev\perch\daemon
@@ -259,7 +283,7 @@ daemon também só emite em mudança, mas isso agora é economia, não requisito
 
 ## Próximos passos óbvios
 
-1. Empacotar (`electron-builder`), iniciar com o Windows, tela de configuração.
+1. Publicar releases no GitHub com o instalador (e, um dia, assinar o .exe).
 2. Remoção de fundo por IA local para fotos (modelo Apache/MIT; evitar
    `@imgly/background-removal`, que é AGPL).
 3. Porte para Tauri v2 (~30MB de RAM contra ~180MB).

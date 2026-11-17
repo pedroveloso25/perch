@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld("overlay", {
   renameImage: (file, base) => ipcRenderer.invoke("pet:rename-image", file, base),
   removeImage: (file) => ipcRenderer.invoke("pet:remove-image", file),
   exportPet: () => ipcRenderer.invoke("pet:export"),
+  // Configurações (Fase 5).
+  getConfig: () => ipcRenderer.invoke("cfg:get"),
+  setConfig: (patch) => ipcRenderer.invoke("cfg:set", patch),       // { ok: snapshot } | { error }
+  claudeHooks: (action) => ipcRenderer.invoke("cfg:claude", action), // "connect" | "disconnect"
+  openThing: (what) => ipcRenderer.invoke("cfg:open", what),         // "editor" | "pets" | "claude"
   importPet: () => ipcRenderer.invoke("pet:import"),
   readConfig: () => ipcRenderer.invoke("pet:config"),          // pet.json ou {}
   saveConfig: (cfg) => ipcRenderer.invoke("pet:save-config", cfg),

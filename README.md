@@ -77,19 +77,47 @@ Os pets moram em `%APPDATA%\perch\pets\<nome>\` (bandeja → **Abrir pasta
 do pet**), não ao lado do código — empacotado, o código vira um `.asar`
 somente-leitura. O overlay lê de lá pelo protocolo `pet://`.
 
+| Estado | Nomes aceitos |
+|---|---|
+| trabalhando | `pensando`, `working`, `trabalhando` |
+| esperando você | `permissao`, `blocked`, `bloqueado` |
+| terminou | `finalizado`, `done`, `pronto` |
+| repouso (o pet some) | `parado`, `idle` |
+| por tool (opcional) | `lendo`/`sherlock` (Read, Grep, Glob), `terminal`/`cooking` (Bash), `editando` (Edit, Write) |
+
+Variações numeradas (`pensando1.png`, `pensando2.png`...) são sorteadas ao
+entrar no estado e trocam a cada 30 s. Caixa e acento não importam. Faltou um
+estado: usa o de trabalho, depois qualquer imagem; pasta vazia → placeholder.
+A pasta é vigiada: imagem nova aparece sem reiniciar.
+
+Qualquer tamanho, fundo transparente. Os nomes ficam em `NAMES`/`TOOL_NAMES`
+em `overlay/renderer.js`.
+
+### Tamanho e chão
+
+Cada imagem é recortada no que é opaco e o **personagem** é detectado como a
+maior "ilha" de pixels opacos: balão de pensamento, foguete ao lado ou sujeira
+da remoção de fundo ficam de fora. O palpite automático escala o personagem
+para a mesma altura em todas as imagens e apoia os pés dele no chão.
+
+O automático erra quando o personagem está grudado em outra coisa (paraquedas
+preso pelas cordas) ou usa chapéu (o chapéu conta como altura). Para isso:
+bandeja → **Calibrar tamanho…**. Todas as imagens aparecem lado a lado no
+mesmo chão, com uma linha de altura alvo; roda do mouse ajusta o tamanho,
+arrastar ajusta o chão, duplo clique volta ao automático. Salvar grava
+`pet.json` na pasta do pet e o overlay atualiza na hora:
+
+```json
+{ "version": 1, "height": 120,
+  "images": { "finalizado2.png": { "scale": 0.45, "floor": 0 } } }
 ```
-idle.png  working.png  done.png  blocked.png  sherlock.png  cooking.png
-```
 
-Todos opcionais. Sprite de tool ausente cai para o do estado (`sherlock.png`
-faltando → `working.png`); sprite de estado ausente → placeholder. Depois de
-trocar arquivos, bandeja → **Recarregar**.
+`scale` = px da tela por px da imagem original; `floor` = px originais entre
+a base da imagem e os pés. Imagem sem entrada usa o palpite automático.
 
-Recomendado 64×64 ou 128×128, fundo transparente. O renderer escala para
-128px com `image-rendering: pixelated`; use múltiplo inteiro do tamanho
-original ou vai borrar em tela com escala 125%/150%.
-
-O mapa tool → sprite está em `SPRITES` dentro de `overlay/renderer.js`.
+A janela do overlay se dimensiona para caber a maior imagem (com folga para
+pulo e balanço), com os pés sempre no mesmo ponto: trocar de estado não muda
+o pet de lugar nem de tamanho.
 
 > A arte do Clawd pertence à Anthropic. Use localmente à vontade; se for
 > publicar o projeto, publique com mascote próprio e deixe a pasta de pets
@@ -123,10 +151,11 @@ e perde o cursor do editor. Equivale a `WS_EX_NOACTIVATE`. Por isso o arraste
 é manual (`setBounds` seguindo o cursor) e não `-webkit-app-region: drag`.
 
 **Por que o click-through é alternado, e não desligado**
-A janela é um quadrado de 160px quase todo transparente. Clicável inteira, ela
+A janela é um retângulo quase todo transparente (do tamanho da maior imagem do pet). Clicável inteira, ela
 engole cliques do que está atrás. O renderer recebe `mousemove` mesmo
-atravessável (`forward: true`), testa o alfa do pixel sob o cursor (desfazendo
-a transform da animação) e pede ao main para virar clicável. Na saída, quem
+atravessável (`forward: true`), testa o alfa do pixel sob o cursor (achando o
+triângulo da malha deformada que contém o ponto) e pede ao main para virar
+clicável. Na saída, quem
 devolve o click-through é o main, vigiando o cursor: um movimento rápido que
 pula a borda transparente não gera nenhum evento no renderer.
 
@@ -136,8 +165,16 @@ alguns pixels (bug do Electron). A 60Hz ela dobrava de tamanho em meio segundo.
 
 **Por que a animação só reinicia em mudança de estado**
 Um loop de edições dispara `PreToolUse` dezenas de vezes por segundo, e o
-payload muda a cada troca de tool. O renderer reinicia o keyframe só quando
-`state` muda; trocar de tool troca a imagem e deixa a animação seguir. O
+payload muda a cada troca de tool. Humor e comportamento de entrada (os pulos
+do "done") só mudam quando `state` muda; trocar de tool troca a imagem e deixa
+a animação seguir.
+
+**Por que malha e não CSS**
+A Fase 2 (`poc/mesh`) comparou os dois com a mesma física: transform CSS só
+escala e gira a imagem inteira. A malha (`overlay/mesh.js`, WebGL2) dobra:
+o topo atrasa no balanço, as pontas balançam como gelatina quando você arrasta
+(o main manda a posição da janela a cada tick), o corpo pende quando segurado
+e achata ao pousar. Custa ~0,3 ms por frame, e o laço dorme em idle. O
 daemon também só emite em mudança, mas isso agora é economia, não requisito.
 
 ## Limitações conhecidas

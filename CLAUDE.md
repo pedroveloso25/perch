@@ -17,18 +17,22 @@ repo nem para uma release. O projeto se publica com mascote próprio.
 
 ```
 hooks/notify.js ──POST──► daemon/server.js (:4747) ──SSE──► overlay/ (Electron)
-                          state.js = regras puras            main.js / preload.js / renderer.js
+                          state.js = regras puras            main.js / preload.js / renderer.js / mesh.js
 ```
 
 - `daemon/state.js`: lógica de estado com relógio injetado e testável (`npm test` em `daemon/`, node:test, 14 testes).
 - `overlay/main.js`: janela transparente, protocolo `pet://`, IPC de click-through e arraste, bandeja.
-- `overlay/renderer.js`: estado → classe CSS (animação), sprite, hit-test por alfa.
+- `overlay/renderer.js`: estado → humor do mesh + classe CSS (opacidade/brilho), escolha de sprite (nomes PT/EN, variações), mouse.
+- `overlay/mesh.js`: motor de malha (WebGL2). Recorte, personagem (maior ilha opaca), `place()` (pet.json → escala/pés), `windowSize()`, molas, hit-test na malha deformada. Não conhece estados. Também é carregado pelo calibrador.
+- `overlay/calibrate.html/.js`: janela "Calibrar tamanho…" (bandeja, ou `npx electron . --calibrate`). Grava `pet.json` via IPC `pet:save-config` (o main valida o formato).
+- `pet.json` (na pasta do pet): `height` + por imagem `scale` (px tela / px original) e `floor` (px originais da base da imagem até os pés). Sem entrada = palpite automático.
+- A janela do overlay é dimensionada pelo renderer (`pet:resize`) para caber TODAS as imagens com os pés fixos no centro da base; o main guarda o tamanho em `size` e o arraste usa ele.
 - Pets: `%APPDATA%\perch\pets\<nome>\*.png`. O pet ativo é fixo em `"default"` (constante duplicada em main.js e renderer.js; vira config na Fase 1/3).
 
 ## Invariantes: quebra se mexer sem entender
 
-1. **A animação só reinicia quando o `state` muda** (`renderer.js` → `render`). A troca de tool só troca a imagem. Não volte a reiniciar o keyframe a cada mensagem.
-2. **A janela é atravessável por padrão.** Ela só vira clicável quando o cursor está sobre um pixel opaco (`hitTest`, que desfaz a transform da animação). Quem devolve o click-through na saída é o **main** (polling do cursor em `pet:interactive`): uma saída rápida não gera NENHUM evento no renderer (nem mouseout, nem mouseleave). Testado.
+1. **Humor e pulos de entrada só mudam quando o `state` muda** (`renderer.js` → `render`). A troca de tool só troca a imagem (e só se a lista de variações mudar). Não volte a sortear imagem ou disparar pulo a cada mensagem.
+2. **A janela é atravessável por padrão.** Ela só vira clicável quando o cursor está sobre um pixel opaco (`mesh.hitTest`: triângulo deformado → UV → alfa). Quem devolve o click-through na saída é o **main** (polling do cursor em `pet:interactive`): uma saída rápida não gera NENHUM evento no renderer (nem mouseout, nem mouseleave). Testado.
 3. **`focusable: false`** fica sempre. Por isso o arraste é manual.
 4. **Arraste com `setBounds` (tamanho explícito), nunca `setPosition`.** No Windows, com `resizable:false`, a janela cresce a cada `setPosition` (bug do Electron; foi de 160 para 308px em meio segundo).
 5. O nome da ponte do `contextBridge` é `window.overlay`. `window.pet` colide com o `const pet` do renderer e mata o script inteiro.
@@ -50,16 +54,20 @@ esses caminhos. Backup do settings original: `%TEMP%\claude-settings.backup.json
 - A posição real da janela vem do Win32 `GetWindowRect` (handle via `Get-Process electron` → `MainWindowHandle`). Não confie em `screenX` do renderer para isso.
 - No PowerShell, nada de função chamada `Move` (é alias de `Move-Item`). Coloque todo o `Add-Type` em um script só, porque cada `powershell` novo leva segundos para recompilar.
 - Dá para gerar sprites de teste (círculo com fundo transparente) com zlib puro no Node e jogar em `%APPDATA%\perch\pets\default\`. Apague depois.
+- `Page.captureScreenshot` TRAVA em janela oculta/encoberta (`document.visibilityState === "hidden"`, comum no calibrador atrás de outras janelas). Use `canvas.toDataURL()` via `Runtime.evaluate`. Com mais de uma janela, escolha o alvo do CDP pela `url` (index.html × calibrate.html).
+- Não deixe `pet.json` de teste na pasta do usuário.
 - Ao terminar, encerre o electron e o daemon que você subiu.
 
 ## Estado atual
 
 - Fase 0 concluída (commit `8000d8e`): correções acima, testes do daemon, rename para perch, pets em `%APPDATA%`, ícone de bandeja visível, filtro de notificação de "esperando input", TTL 2 min / 15 min com tool rodando.
 - O usuário renomeou ou vai renomear a pasta `clawd-overlay` → `perch` (precisa da sessão fechada).
+- Fase 2 integrada: PoC em `poc/mesh/index.html` (bancada com sliders, modo Malha × Rígido); motor em `overlay/mesh.js`. Os keyframes CSS saíram; cada estado é um "humor" (`MOODS` no renderer). Janela 240px; pés a 14px da base; imagem centralizada na horizontal (não os pés). Testado com mouse real (SendInput): gelatina no arraste, janela não cresce.
+- Pets do usuário em `%APPDATA%\perch\pets\default`: pensando1-3, finalizado1-3, permissao (arte local, não vai pro repo). Padronização de tamanho feita (palpite automático + calibrador). No automático acerta finalizado1 (ignora o foguete) e permissao (ignora o balão); erra finalizado2 (paraquedas grudado pelas cordas, precisa ~2x) e os chapéus de pensando1/finalizado3. O usuário ainda vai calibrar; não há pet.json salvo.
 
 ## Próximos passos (plano combinado)
 
-**Fase 2, prova de conceito primeiro (próxima tarefa):** um HTML isolado com
+**Fase 2 (concluída, ver Estado atual):** um HTML isolado com
 uma imagem + sliders, testando a **deformação de malha** (Canvas/WebGL, imagem
 dividida em grade, vértices deformados): respiração, balanço "gelatinoso",
 inércia ao arrastar, squash/stretch. A pergunta a responder: uma imagem

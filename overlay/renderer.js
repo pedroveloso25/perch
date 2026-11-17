@@ -2,90 +2,159 @@ const PORT = 4747;
 const PET = "default"; // pasta em %APPDATA%/perch/pets/
 const STATES = ["idle", "working", "done", "blocked"];
 const ALPHA_HIT = 32; // 0-255: abaixo disso o pixel é "fundo" e o clique atravessa
+const VARIANT_ROTATE_MS = 30_000; // estado longo com várias imagens: troca de vez em quando
 
-const pet = document.getElementById("pet");
-const sprite = document.getElementById("sprite");
+const canvas = document.getElementById("pet");
 
-/* Mapa tool -> sprite. O renderer não conhece nenhum arquivo específico:
-   troque a pasta do pet e o visual inteiro muda sem tocar em código.
-   (Deliberado: a arte do Clawd é da Anthropic. Mantenha-a local e publique
-   o projeto com mascote próprio.) */
-const SPRITES = {
-  idle:    "idle.png",
-  working: "working.png",
-  done:    "done.png",
-  blocked: "blocked.png",
-  tools: {
-    Edit: "working.png",  Write: "working.png",  MultiEdit: "working.png",
-    Read: "sherlock.png", Grep:  "sherlock.png", Glob: "sherlock.png",
-    Bash: "cooking.png",
-  },
+/* Nomes de arquivo aceitos por estado, em ordem de preferência. Variações
+   numeradas contam como o mesmo nome (pensando1.png, pensando-2.png...) e
+   uma delas é sorteada ao entrar no estado. Acento e caixa não importam.
+   O renderer não conhece nenhum arquivo específico: troque a pasta do pet e o
+   visual inteiro muda sem tocar em código. (Deliberado: a arte do Clawd é da
+   Anthropic. Mantenha-a local e publique o projeto com mascote próprio.) */
+const NAMES = {
+  idle:    ["idle", "parado"],
+  working: ["working", "pensando", "trabalhando"],
+  done:    ["done", "finalizado", "pronto"],
+  blocked: ["blocked", "permissao", "bloqueado"],
+};
+const TOOL_NAMES = {
+  Read: ["sherlock", "lendo"], Grep: ["sherlock", "lendo"], Glob: ["sherlock", "lendo"],
+  Bash: ["cooking", "terminal"],
+  Edit: ["editando"], Write: ["editando"], MultiEdit: ["editando"],
 };
 
-// Em ordem de preferência: sprite da tool, depois o do estado. Assim um pet
-// sem sherlock.png mostra working.png no Read em vez de cair no placeholder.
-function candidates(state, tool) {
-  const list = [];
-  if (state === "working" && tool && SPRITES.tools[tool]) list.push(SPRITES.tools[tool]);
-  list.push(SPRITES[state] || SPRITES.idle);
-  return [...new Set(list)];
-}
+/* A hierarquia visual é o produto inteiro. Visão periférica registra MUDANÇA,
+   não estado. Se "pensando" e "terminou" tiverem a mesma energia, você
+   dessensibiliza e o overlay vira enfeite. (Opacidade e brilho ficam no CSS.)
+   - idle: invisível. Nada acontecendo = nada na tela.
+   - working: lento, baixa amplitude. Presente mas ignorável.
+   - done: pico brusco (dois pulos) e depois sustenta. É o evento que te chama.
+   - blocked: o mais agressivo. Está travado esperando VOCÊ. */
+const MOODS = {
+  idle:    { breathAmp: 0.02, breathHz: 0.25, swayAmp: 0,    swayHz: 0.3, bobAmp: 0, bobHz: 0.5 },
+  working: { breathAmp: 0.03, breathHz: 0.38, swayAmp: 0.02, swayHz: 0.3, bobAmp: 0, bobHz: 0.5 },
+  done:    { breathAmp: 0.03, breathHz: 0.5,  swayAmp: 0.03, swayHz: 0.8, bobAmp: 9, bobHz: 0.9 },
+  blocked: { breathAmp: 0.02, breathHz: 0.8,  swayAmp: 0.12, swayHz: 1.6, bobAmp: 5, bobHz: 1.6 },
+};
+
+const mesh = PetMesh.create(canvas);
+
+function resize() { mesh.resize(innerWidth, innerHeight, devicePixelRatio || 1); }
+addEventListener("resize", resize);
+resize();
 
 // ---------------------------------------------------------------------------
-// Imagem
+// Imagens
 // ---------------------------------------------------------------------------
 
-let currentKey = null;
-let loadSeq = 0;
-let alpha = null; // { w, h, data } da imagem atual, para o hit-test
+let groups = new Map();  // nome base -> [arquivos]
+let loaded = new Map();  // arquivo -> { s: sprite analisado, p: place() }
+let analyzed = new Map(); // "arquivo:mtime" -> Promise<sprite>; sobrevive a refresh
+let listKey = null;      // lista de variações em uso
+let currentFile;         // undefined = nada escolhido ainda; null = placeholder
+let chosenAt = 0;
+let refreshSeq = 0;
 
-function loadImage(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous"; // sem isto o canvas fica "tainted" e getImageData lança
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
-  });
+function baseName(file) {
+  const n = file.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const m = n.match(/^(.*?)[\s_-]*\d*\.png$/);
+  return m ? m[1] : null;
 }
 
-function readAlpha(img) {
-  const c = document.createElement("canvas");
-  c.width = img.naturalWidth;
-  c.height = img.naturalHeight;
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0);
-  return { w: c.width, h: c.height, data: ctx.getImageData(0, 0, c.width, c.height).data };
-}
+/* Lê a pasta e o pet.json e carrega TODAS as imagens de uma vez: a janela
+   precisa caber a maior delas (para não mudar de tamanho a cada estado) e a
+   troca de imagem vira instantânea. A análise fica em cache por arquivo +
+   mtime, então salvar o pet.json não reanalisa nada. */
+async function refreshSprites() {
+  const seq = ++refreshSeq;
+  const [files, config] = await Promise.all([
+    window.overlay.listSprites().catch(() => []),
+    window.overlay.readConfig().catch(() => ({})),
+  ]);
+  const height = config.height > 0 ? config.height : PetMesh.DEFAULT_HEIGHT;
+  const images = config.images || {};
 
-async function setImage(files) {
-  const key = files.join("|");
-  if (key === currentKey) return;
-  currentKey = key;
-
-  // Carregamento é assíncrono: se o estado mudar duas vezes rápido, o onload
-  // da imagem ANTIGA pode chegar depois do da nova. O seq descarta o atrasado.
-  const seq = ++loadSeq;
-
-  for (const file of files) {
+  const results = await Promise.all(files.map(async ({ name, mtime }) => {
+    const key = name + ":" + mtime;
+    if (!analyzed.has(key)) analyzed.set(key, PetMesh.load("pet://" + PET + "/" + encodeURIComponent(name)));
     try {
-      const img = await loadImage(`pet://${PET}/${file}`);
-      if (seq !== loadSeq) return;
-      alpha = readAlpha(img);
-      sprite.src = img.src;
-      pet.classList.remove("placeholder");
-      return;
+      const s = await analyzed.get(key);
+      return [name, { s, p: PetMesh.place(s, images[name], height) }];
     } catch {
-      if (seq !== loadSeq) return;
+      analyzed.delete(key); // falhou: tenta de novo no próximo refresh
+      return null;
     }
-  }
+  }));
+  if (seq !== refreshSeq) return; // um refresh mais novo já começou
 
-  // Nenhuma existe. Esquece a chave para tentar de novo na próxima mudança —
-  // senão um PNG adicionado depois só apareceria reiniciando o app.
-  currentKey = null;
-  alpha = null;
-  sprite.removeAttribute("src");
-  pet.classList.add("placeholder");
+  loaded = new Map(results.filter(Boolean));
+  groups = new Map();
+  for (const name of loaded.keys()) {
+    const b = baseName(name);
+    if (b) groups.set(b, [...(groups.get(b) || []), name]);
+  }
+  fitWindow(height);
+  listKey = null;
+  currentFile = undefined;
+  if (currentState) choose(variantsFor(currentState, currentTool), true);
+}
+
+// Quadrado laranja enquanto a pasta não tem nenhuma imagem.
+let placeholderSprite = null;
+function placeholder(height) {
+  if (!placeholderSprite) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 96;
+    const g = c.getContext("2d");
+    g.fillStyle = "#d97757";
+    g.beginPath(); g.roundRect(0, 0, 96, 96, 14); g.fill();
+    g.fillStyle = "rgba(0, 0, 0, .14)";
+    g.fillRect(10, 86, 86, 10);
+    placeholderSprite = PetMesh.analyze(c);
+  }
+  return { s: placeholderSprite, p: PetMesh.place(placeholderSprite, null, height) };
+}
+
+let fallback = null;
+function fitWindow(height) {
+  fallback = placeholder(height);
+  const size = PetMesh.windowSize(loaded.size ? [...loaded.values()] : [fallback]);
+  mesh.setFootMargin(size.foot);
+  window.overlay.resizeWindow(size.w, size.h); // o "resize" da janela chama mesh.resize
+}
+
+// Em ordem: sprite da tool, depois o do estado, depois "pensando", depois
+// qualquer imagem. Um pet só com pensando*.png já funciona em todo estado.
+function variantsFor(state, tool) {
+  const pick = (names) => names.flatMap((n) => groups.get(n) || []);
+  if (state === "working" && TOOL_NAMES[tool]) {
+    const list = pick(TOOL_NAMES[tool]);
+    if (list.length) return list;
+  }
+  for (const s of [state, "working"]) {
+    const list = pick(NAMES[s]);
+    if (list.length) return list;
+  }
+  return [...groups.values()].flat();
+}
+
+// Mesma lista de antes: mantém a imagem (trocar de tool não pode piscar o
+// pet). Lista nova ou force: sorteia, evitando repetir a atual.
+function choose(list, force = false) {
+  const key = list.join("|");
+  if (!force && key === listKey && currentFile !== undefined) return;
+  listKey = key;
+  const others = list.filter((f) => f !== currentFile);
+  const pool = others.length ? others : list;
+  showFile(pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
+}
+
+function showFile(file) {
+  currentFile = file;
+  chosenAt = Date.now();
+  const item = (file && loaded.get(file)) || fallback;
+  if (item) mesh.setSprite(item.s, item.p);
 }
 
 // ---------------------------------------------------------------------------
@@ -93,21 +162,30 @@ async function setImage(files) {
 // ---------------------------------------------------------------------------
 
 let currentState = null;
+let currentTool = null;
 
 function render({ state, tool }) {
-  setImage(candidates(state, tool));
-
-  // Animação só reinicia quando o ESTADO muda. Trocar de tool (Read -> Edit)
-  // troca a imagem acima e deixa a animação seguir. Antes, qualquer mensagem
-  // reiniciava o keyframe — e o renderer dependia do daemon nunca repetir
-  // payload para o sprite não congelar no primeiro frame.
-  if (state === currentState) return;
+  const changed = state !== currentState;
   currentState = state;
+  currentTool = tool;
+  choose(variantsFor(state, tool), changed);
 
-  pet.classList.remove(...STATES);
-  void pet.offsetWidth; // reflow: sem ele, remover+adicionar a classe não reinicia o keyframe
-  pet.classList.add(state);
+  // Comportamento de entrada (pulos do done) só quando o ESTADO muda. Trocar
+  // de tool (Read -> Edit) só troca a imagem acima e deixa a animação seguir.
+  if (!changed) return;
+  canvas.classList.remove(...STATES);
+  canvas.classList.add(state);
+  mesh.setMood(MOODS[state] || MOODS.idle);
+  if (state === "done") mesh.hop(2);
+  wake();
 }
+
+setInterval(() => {
+  if (currentState && currentState !== "idle" && !dragging && Date.now() - chosenAt > VARIANT_ROTATE_MS) {
+    const list = variantsFor(currentState, currentTool);
+    if (list.length > 1) choose(list, true);
+  }
+}, 5000);
 
 function connect() {
   const es = new EventSource(`http://127.0.0.1:${PORT}/stream`);
@@ -120,37 +198,46 @@ function connect() {
 }
 
 // ---------------------------------------------------------------------------
+// Laço de animação: dorme em idle (o pet está invisível, não há o que animar)
+// ---------------------------------------------------------------------------
+
+let rafId = 0;
+let last = 0;
+let sleepTimer = 0;
+
+function loop(now) {
+  mesh.update((now - last) / 1000);
+  last = now;
+  mesh.draw();
+  rafId = requestAnimationFrame(loop);
+}
+
+function wake() {
+  clearTimeout(sleepTimer);
+  if (!rafId) {
+    last = performance.now();
+    rafId = requestAnimationFrame(loop);
+  }
+  // Espera o fade-out do CSS (320ms) terminar antes de parar de desenhar.
+  if (currentState === "idle" && !dragging) sleepTimer = setTimeout(sleep, 600);
+}
+
+function sleep() {
+  if (currentState !== "idle" || dragging) return;
+  cancelAnimationFrame(rafId);
+  rafId = 0;
+}
+
+// ---------------------------------------------------------------------------
 // Mouse: clicável só onde o pet é opaco
 // ---------------------------------------------------------------------------
 
-/**
- * O cursor (coords da janela) está sobre um pixel visível do pet?
- *
- * Desfaz a transform CSS da animação (rotate/scale/translate em volta do
- * transform-origin) para achar o ponto no espaço da imagem parada. Sem isso,
- * no "blocked" que balança ±7°, o clique erraria as bordas.
- */
+// O cursor (coords da janela) está sobre um pixel visível do pet? O mesh
+// testa contra a malha deformada deste frame, então balanço e pulo não
+// fazem o clique errar as bordas.
 function hitTest(x, y) {
-  const cs = getComputedStyle(pet);
-  if (parseFloat(cs.opacity) < 0.05) return false; // idle/invisível: atravessa
-
-  const w = pet.offsetWidth;
-  const h = pet.offsetHeight;
-  const [ox, oy] = cs.transformOrigin.split(" ").map(parseFloat);
-  const m = cs.transform === "none" ? new DOMMatrix() : new DOMMatrix(cs.transform);
-  const p = m.inverse().transformPoint({ x: x - pet.offsetLeft - ox, y: y - pet.offsetTop - oy });
-  const lx = p.x + ox;
-  const ly = p.y + oy;
-
-  if (lx < 0 || ly < 0 || lx >= w || ly >= h) return false;
-  if (!alpha) return true; // placeholder: o quadrado inteiro conta
-
-  // object-fit: contain -> retângulo onde a imagem foi realmente desenhada
-  const scale = Math.min(w / alpha.w, h / alpha.h);
-  const ix = Math.floor((lx - (w - alpha.w * scale) / 2) / scale);
-  const iy = Math.floor((ly - (h - alpha.h * scale) / 2) / scale);
-  if (ix < 0 || iy < 0 || ix >= alpha.w || iy >= alpha.h) return false;
-  return alpha.data[(iy * alpha.w + ix) * 4 + 3] > ALPHA_HIT;
+  if (parseFloat(getComputedStyle(canvas).opacity) < 0.05) return false; // idle/invisível: atravessa
+  return mesh.hitTest(x, y, ALPHA_HIT);
 }
 
 let interactive = false;
@@ -159,7 +246,7 @@ let dragging = false;
 function setInteractive(on) {
   if (on === interactive) return; // IPC só em mudança: mousemove dispara a 60Hz+
   interactive = on;
-  pet.classList.toggle("interactive", on);
+  canvas.classList.toggle("interactive", on);
   window.overlay.setInteractive(on);
 }
 
@@ -173,23 +260,31 @@ window.addEventListener("mousemove", (e) => {
 // O main vigia o cursor e já devolveu o click-through; só sincroniza o flag.
 window.overlay.onMouseLeft(() => {
   interactive = false;
-  pet.classList.remove("interactive");
+  canvas.classList.remove("interactive");
 });
 
 window.addEventListener("mousedown", (e) => {
   if (e.button !== 0 || !interactive) return;
   dragging = true;
-  pet.classList.add("dragging");
+  canvas.classList.add("dragging");
+  mesh.grab(e.clientX, e.clientY);
   window.overlay.dragStart();
+  wake();
 });
 
 function endDrag() {
   if (!dragging) return;
   dragging = false;
-  pet.classList.remove("dragging");
+  canvas.classList.remove("dragging");
+  mesh.release();
   window.overlay.dragEnd();
+  wake();
 }
 window.addEventListener("mouseup", endDrag);
 window.addEventListener("blur", endDrag);
 
-connect();
+// A janela andou (arraste): a malha sente a aceleração e balança.
+window.overlay.onMoved((p) => mesh.frameMoved(p.x, p.y));
+window.overlay.onSpritesChanged(refreshSprites);
+
+refreshSprites().then(connect);

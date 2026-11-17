@@ -7,4 +7,10 @@ contextBridge.exposeInMainWorld("overlay", {
   dragStart: () => ipcRenderer.send("pet:drag-start"),
   dragEnd: () => ipcRenderer.send("pet:drag-end"),
   onMouseLeft: (fn) => ipcRenderer.on("pet:mouse-left", () => fn()),
+  onMoved: (fn) => ipcRenderer.on("pet:moved", (_e, p) => fn(p)),
+  listSprites: () => ipcRenderer.invoke("pet:list"),          // [{ name, mtime }]
+  readConfig: () => ipcRenderer.invoke("pet:config"),          // pet.json ou {}
+  saveConfig: (cfg) => ipcRenderer.invoke("pet:save-config", cfg),
+  resizeWindow: (w, h) => ipcRenderer.send("pet:resize", { w, h }),
+  onSpritesChanged: (fn) => ipcRenderer.on("pet:sprites-changed", () => fn()),
 });

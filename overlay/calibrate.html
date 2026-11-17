@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src pet:" />
+<title>Perch · calibrar tamanho</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: grid; grid-template-rows: auto 1fr auto; font: 13px/1.4 system-ui, sans-serif;
+    color: #e8eaf0; background: #14161f; user-select: none;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    padding: 12px 16px; border-bottom: 1px solid #262a38;
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header label { display: flex; align-items: center; gap: 8px; }
+  header input[type=range] { width: 180px; }
+  .spacer { flex: 1; }
+  #status { color: #a3a8b8; min-width: 150px; text-align: right; }
+  #status.dirty { color: #ffcf6e; }
+  button {
+    font: inherit; color: #e8eaf0; background: #2a2f40; border: 1px solid #3c4359;
+    border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { background: #343a50; }
+  button.primary { background: #4b63c9; border-color: #6f8dff; }
+  button.primary:hover { background: #5671dd; }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=range] { accent-color: #6f8dff; }
+  output { font-variant-numeric: tabular-nums; color: #cfd3df; min-width: 48px; display: inline-block; }
+
+  main { display: grid; grid-template-rows: minmax(260px, 1fr) auto; min-height: 0; }
+  #stage { width: 100%; height: 100%; display: block; cursor: default; }
+  #stage.over { cursor: ns-resize; }
+  #hint { padding: 6px 16px; color: #8a90a3; border-top: 1px solid #262a38; }
+
+  #cards {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px;
+    padding: 10px 16px 14px; max-height: 260px; overflow-y: auto; border-top: 1px solid #262a38;
+  }
+  .card { padding: 8px 10px; border: 1px solid #2c3142; border-radius: 8px; background: #1a1d29; cursor: pointer; }
+  .card.sel { border-color: #6f8dff; background: #1e2335; }
+  .card .top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .card .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .auto { font-size: 11px; color: #8fa8ff; }
+  .card .row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 6px; }
+  .card .row input { width: 100%; }
+  .card button { padding: 2px 8px; font-size: 12px; }
+  .empty { padding: 40px; text-align: center; color: #a3a8b8; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Calibrar tamanho</h1>
+    <label>Altura do personagem
+      <input type="range" id="height" min="50" max="320" step="1" />
+      <output id="heightOut"></output>
+    </label>
+    <button id="autoAll" title="Descarta os ajustes e volta ao palpite automático">Tudo automático</button>
+    <span class="spacer"></span>
+    <span id="status"></span>
+    <button id="discard">Descartar</button>
+    <button id="save" class="primary">Salvar</button>
+  </header>
+  <main>
+    <canvas id="stage"></canvas>
+    <div id="cards"></div>
+  </main>
+  <div id="hint">
+    Deixe todos os personagens com o mesmo tamanho (a linha tracejada é a altura alvo).
+    Na imagem: roda do mouse = tamanho · arrastar para cima/baixo = chão · duplo clique = automático.
+    Teclado: ↑ ↓ chão · + − tamanho. <span id="win"></span>
+  </div>
+  <script src="mesh.js"></script>
+  <script src="calibrate.js"></script>
+</body>
+</html>

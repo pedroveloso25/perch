@@ -140,6 +140,10 @@ disso, cliques atravessam para a janela de trás.
 
 O jeito fácil é a bandeja → **Editar pet…**:
 
+- **Estados do pet** (painel à direita): cada estado com *quando* ele
+  aparece, quantas imagens tem e, se faltar, qual imagem entra no lugar.
+  "+ adicionar" abre a importação já no estado certo (o nome do arquivo não
+  importa). Essenciais: pensando, permissão, finalizado; o resto é opcional.
 - **Adicionar imagens** (ou solte PNG/JPG na janela). Cada imagem passa por
   uma prévia: escolha o estado (o nome do arquivo dá o palpite), e a remoção
   de fundo apaga a cor que encosta nas bordas da imagem (branco de imagem
@@ -160,17 +164,20 @@ do pet**), não ao lado do código — empacotado, o código vira um `.asar`
 somente-leitura. O overlay lê de lá pelo protocolo `pet://`. Dá para mexer
 direto na pasta também, com estes nomes:
 
-| Estado | Nomes aceitos |
-|---|---|
-| trabalhando | `pensando`, `working`, `trabalhando` |
-| esperando você | `permissao`, `blocked`, `bloqueado` |
-| terminou | `finalizado`, `done`, `pronto` |
-| repouso (o pet some) | `parado`, `idle` |
-| por tool (opcional) | `lendo`/`sherlock` (Read, Grep, Glob), `terminal`/`cooking` (Bash), `editando` (Edit, Write) |
+| Estado | Quando aparece | Nomes aceitos | Se faltar, usa |
+|---|---|---|---|
+| **pensando** | a IA está trabalhando | `pensando`, `working`, `trabalhando` | qualquer imagem |
+| **permissão** | a IA espera você aprovar algo | `permissao`, `blocked`, `bloqueado` | pensando |
+| **finalizado** | a IA terminou | `finalizado`, `done`, `pronto` | pensando |
+| parado | modo pet, descansando | `parado`, `idle` | pensando |
+| dormindo | modo pet, você saiu do computador | `dormindo`, `sleeping`, `sleep` | parado → pensando |
+| andando | modo pet, passeando | `andando`, `walking`, `walk` | parado → pensando |
+| por ferramenta | lendo (Read, Grep, Glob), terminal (Bash), editando (Edit, Write) | `lendo`/`sherlock`, `terminal`/`cooking`, `editando` | pensando |
 
 Variações numeradas (`pensando1.png`, `pensando2.png`...) são sorteadas ao
-entrar no estado e trocam a cada 30 s. Caixa e acento não importam. Faltou um
-estado: usa o de trabalho, depois qualquer imagem; pasta vazia → placeholder.
+entrar no estado e trocam a cada 30 s. Caixa e acento não importam. Pasta
+vazia → placeholder. A tabela do painel do editor fica em `STATE_GUIDE`
+(`overlay/calibrate.js`); mude junto com `NAMES` do renderer.
 A pasta é vigiada: imagem nova aparece sem reiniciar.
 
 Qualquer tamanho, fundo transparente. Os nomes ficam em `NAMES`/`TOOL_NAMES`

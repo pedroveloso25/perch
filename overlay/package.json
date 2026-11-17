@@ -1,6 +1,6 @@
 {
   "name": "perch",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Pet de desktop que ganha vida a partir de qualquer imagem",
   "main": "main.js",

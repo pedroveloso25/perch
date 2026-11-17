@@ -308,6 +308,61 @@ function baseOf(file) {
   return m ? m[1] : "";
 }
 
+// Guia dos estados (painel à direita). names = bases que o overlay aceita
+// para o estado (renderer.js → NAMES/TOOL_NAMES); fallback = o que o overlay
+// mostra quando falta (mesma cadeia do variantsFor). Texto pensado para quem
+// nunca viu o projeto: diz QUANDO a imagem aparece, não o nome do evento.
+const STATE_GUIDE = [
+  { group: "Essenciais", lead: "O que a IA está fazendo agora." },
+  { state: "pensando", label: "Pensando", when: "A IA está trabalhando: lendo, escrevendo, rodando comandos.",
+    names: ["pensando", "working", "trabalhando"], essential: true, fallback: [] },
+  { state: "permissao", label: "Precisando de permissão", when: "A IA parou e está esperando você aprovar algo ou responder.",
+    names: ["permissao", "blocked", "bloqueado"], essential: true, fallback: ["pensando"] },
+  { state: "finalizado", label: "Finalizado", when: "A IA terminou a tarefa. Aparece por alguns segundos.",
+    names: ["finalizado", "done", "pronto"], essential: true, fallback: ["pensando"] },
+  { group: "Modo pet", lead: "Quando nenhuma IA está fazendo nada." },
+  { state: "parado", label: "Parado", when: "Descansando na barra de tarefas.",
+    names: ["parado", "idle"], fallback: ["pensando"] },
+  { state: "dormindo", label: "Dormindo", when: "Você está longe do computador (ou bloqueou a tela).",
+    names: ["dormindo", "sleeping", "sleep"], fallback: ["parado", "pensando"] },
+  { state: "andando", label: "Andando", when: "Dando uma voltinha perto de casa.",
+    names: ["andando", "walking", "walk"], fallback: ["parado", "pensando"] },
+  { group: "Extras", lead: "Opcionais: trocam a imagem de \"pensando\" conforme a ferramenta." },
+  { state: "lendo", label: "Lendo", when: "Lendo arquivos ou procurando no código.",
+    names: ["lendo", "sherlock"], fallback: ["pensando"] },
+  { state: "terminal", label: "Terminal", when: "Rodando comandos.",
+    names: ["terminal", "cooking"], fallback: ["pensando"] },
+  { state: "editando", label: "Editando", when: "Escrevendo ou alterando arquivos.",
+    names: ["editando"], fallback: ["pensando"] },
+];
+
+function renderStates() {
+  const count = (g) => items.filter((it) => g.names.includes(baseOf(it.name))).length;
+  const labelOf = (s) => STATE_GUIDE.find((g) => g.state === s)?.label || s;
+  const host = $("states");
+  const out = [`<h3>Estados do pet</h3>
+    <p class="lead">Cada estado é uma situação em que o pet aparece. Só uma imagem já funciona; o que faltar usa outra no lugar.</p>`];
+  for (const g of STATE_GUIDE) {
+    if (g.group) { out.push(`<h4>${g.group}</h4><p class="lead">${g.lead}</p>`); continue; }
+    const n = count(g);
+    let fb = "";
+    if (!n && items.length) {
+      const sub = g.fallback.find((s) => count(STATE_GUIDE.find((x) => x.state === s)) > 0);
+      fb = sub ? `Sem imagem: usa "${labelOf(sub)}".` : "Sem imagem: usa qualquer imagem do pet.";
+    }
+    const cls = n ? "ok" : g.essential ? "miss" : "opt";
+    const icon = n ? "✓" : g.essential ? "!" : "–";
+    out.push(`<div class="st ${cls}">
+      <span class="ic">${icon}</span><span class="nm">${g.label}</span>
+      ${n ? `<span class="n">${n} ${n > 1 ? "imagens" : "imagem"}</span>` : `<button data-add="${g.state}">+ adicionar</button>`}
+      <span class="when">${g.when}</span>
+      ${fb ? `<span class="fb">${fb}</span>` : ""}
+    </div>`);
+  }
+  out.push(`<p class="tip">Várias imagens no mesmo estado são sorteadas, para variar. Para trocar o estado de uma imagem, use o cartão dela.</p>`);
+  host.innerHTML = out.join("");
+}
+
 function stateSelect(current) {
   const sel = document.createElement("select");
   const known = PET_STATES.some(([v]) => v === current);
@@ -321,6 +376,7 @@ function stateSelect(current) {
 }
 
 function buildCards() {
+  renderStates();
   const host = $("cards");
   host.replaceChildren();
   if (!items.length) {

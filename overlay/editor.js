@@ -90,6 +90,7 @@ function guessState(fileName) {
 const queue = [];
 let cur = null;           // { file, img: ImageData original, bg, transparent, result: ImageData }
 let lastState = "pensando";
+let presetState = null;   // "+ adicionar" do painel de estados: o estado já vem escolhido
 
 function addFiles(files) {
   const images = [...files].filter((f) => f.type.startsWith("image/"));
@@ -107,6 +108,7 @@ async function next() {
   const file = queue.shift();
   if (!file) {
     cur = null;
+    presetState = null;
     $("import").classList.remove("open");
     return;
   }
@@ -130,7 +132,7 @@ async function next() {
 
   cur = { file, img, bg: info.bg, transparent: info.transparent, result: img, removed: 0 };
   $("impName").textContent = file.name;
-  $("impState").value = guessState(file.name) || lastState;
+  $("impState").value = presetState || guessState(file.name) || lastState;
   $("impBg").checked = !info.transparent;
   updateCount();
   $("import").classList.add("open");
@@ -256,7 +258,13 @@ addEventListener("keydown", (e) => {
   if (e.key === "Escape" && cur) $("impCancel").click();
 });
 
-$("addImages").addEventListener("click", () => $("fileInput").click());
+$("addImages").addEventListener("click", () => { presetState = null; $("fileInput").click(); });
+$("states").addEventListener("click", (ev) => {
+  const st = ev.target.closest("[data-add]")?.dataset.add;
+  if (!st || cur) return;
+  presetState = st;
+  $("fileInput").click();
+});
 $("fileInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
 
 // Soltar arquivos em qualquer lugar da janela. Sem preventDefault o Electron
@@ -266,6 +274,7 @@ addEventListener("dragleave", (e) => { if (!e.relatedTarget) document.body.class
 addEventListener("drop", (e) => {
   e.preventDefault();
   document.body.classList.remove("dropping");
+  if (!cur) presetState = null; // soltar arquivo = palpite pelo nome, não o último "+ adicionar"
   addFiles(e.dataTransfer.files);
 });
 

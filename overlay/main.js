@@ -4,15 +4,19 @@ const {
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const { createBody, releaseVelocity, DEFAULTS: PHYSICS } = require("./physics");
 
 // Tamanho inicial da janela em DIP. O renderer pede o tamanho certo
 // (pet:resize) assim que mede as imagens do pet: cabe a maior delas, com
 // folga para pulo e balanço. O resto é transparente e o clique atravessa.
 const SIZE = 240;
 const MAX_SIZE = 1200;
-const MARGIN = 10; // distância da borda da área de trabalho
 const DRAG_TICK_MS = 16;
+const PHYSICS_TICK_MS = 16;
 const LEAVE_POLL_MS = 100;
+const CLICK_MOVE = 4;   // px: soltou mexendo menos que isso...
+const CLICK_MS = 350;   // ...e mais rápido que isso = clique, não arraste
+const SETTINGS_FILE = path.join(app.getPath("userData"), "settings.json");
 
 // Janelas transparentes + aceleração de hardware têm histórico de artefato
 // no Windows (retângulo preto, flicker). Se acontecer, descomente:
@@ -34,8 +38,125 @@ let win = null;
 let calibrator = null;
 let tray = null;
 let size = { w: SIZE, h: SIZE };
+// Geometria do pet a partir dos pés, medida pelo renderer (pet:resize):
+// foot = pés -> base da janela; side/up = meia largura e altura visíveis.
+let geom = { foot: 14, side: 60, up: 120 };
 let dragTimer = null;
+let drag = null;        // { t0, start: {x,y}, samples: [{t,x,y}] }
 let leaveTimer = null;
+let physTimer = null;
+const body = createBody();
+
+// ---------------------------------------------------------------------------
+// Preferências (posição e gravidade)
+// ---------------------------------------------------------------------------
+
+// Arquivo próprio em vez de electron-store: são duas chaves.
+let settings = { gravity: true, feet: null };
+try {
+  settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
+} catch {}
+
+let saveTimer = null;
+function saveSettings() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch {}
+}
+function saveSettingsSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveSettings, 500);
+}
+
+// ---------------------------------------------------------------------------
+// Posição: tudo gira em torno do ponto dos PÉS (o tamanho da janela muda com
+// as imagens do pet, os pés não)
+// ---------------------------------------------------------------------------
+
+function feetOf(b = win.getBounds(), foot = geom.foot) {
+  return { x: b.x + b.width / 2, y: b.y + b.height - foot };
+}
+
+function boundsForFeet(fx, fy) {
+  return {
+    x: Math.round(fx - size.w / 2),
+    y: Math.round(fy - size.h + geom.foot),
+    width: size.w,
+    height: size.h,
+  };
+}
+
+// setBounds com tamanho explícito, NÃO setPosition: no Windows, com
+// resizable:false, cada setPosition faz a janela crescer alguns px (bug do
+// Electron). A 60Hz ela dobrava de tamanho em meio segundo.
+function moveTo(b, airborne = false) {
+  win.setBounds(b);
+  // A malha precisa do movimento da janela para balançar como gelatina;
+  // g avisa que é queda livre (tudo cai junto, nada deforma).
+  win.webContents.send("pet:moved", { x: b.x, y: b.y, g: airborne ? PHYSICS.gravity : 0 });
+}
+
+// workArea do monitor onde estão os pés: o chão é o topo da barra de tarefas
+// DAQUELE monitor (multi-monitor com alturas e barras diferentes).
+function areaAt(p) {
+  return screen.getDisplayNearestPoint({ x: Math.round(p.x), y: Math.round(p.y) }).workArea;
+}
+
+function onSomeDisplay(p) {
+  return screen.getAllDisplays().some(({ bounds: d }) =>
+    p.x >= d.x && p.x < d.x + d.width && p.y >= d.y && p.y <= d.y + d.height);
+}
+
+function defaultFeet() {
+  const a = screen.getPrimaryDisplay().workArea;
+  return { x: a.x + a.width - 160, y: a.y + a.height };
+}
+
+function stopPhysics() {
+  clearInterval(physTimer);
+  physTimer = null;
+}
+
+// Deixa o corpo seguir a física a partir de onde está (e com a velocidade
+// que tiver) até parar no chão. Sem gravidade, fica onde foi solto.
+function settle() {
+  if (!win || win.isDestroyed() || dragTimer) return;
+  if (!settings.gravity) {
+    settings.feet = { x: body.x, y: body.y };
+    return saveSettingsSoon();
+  }
+  if (physTimer) return;
+  let last = performance.now();
+  physTimer = setInterval(() => {
+    if (!win || win.isDestroyed()) return stopPhysics();
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const r = body.step(dt, areaAt(body), geom);
+    moveTo(boundsForFeet(body.x, body.y), r.airborne);
+    if (r.impact > 80) win.webContents.send("pet:landed", r.impact);
+    if (r.resting) {
+      stopPhysics();
+      settings.feet = { x: body.x, y: body.y };
+      saveSettingsSoon();
+    }
+  }, PHYSICS_TICK_MS);
+}
+
+// Monitor desconectado, resolução ou barra de tarefas mudou: se os pés
+// ficaram fora de qualquer tela, volta para o canto do monitor principal;
+// em todo caso, cai (ou sobe) até o chão novo.
+function reanchor() {
+  if (!win || win.isDestroyed() || dragTimer) return;
+  stopPhysics();
+  let f = feetOf();
+  if (!onSomeDisplay(f)) {
+    f = defaultFeet();
+    win.setBounds(boundsForFeet(f.x, f.y));
+  }
+  body.place(f.x, f.y);
+  settle();
+}
 
 function ensurePetDir() {
   const dir = path.join(PETS_DIR, ACTIVE_PET);
@@ -86,15 +207,19 @@ function registerPetProtocol() {
 }
 
 function createWindow() {
-  // workArea (e não bounds) respeita a barra de tarefas: o pet não fica
-  // escondido atrás dela quando ancorado no canto inferior direito.
-  const { workArea } = screen.getPrimaryDisplay();
+  // Onde o pet estava da última vez, se esse ponto ainda existe em algum
+  // monitor; senão, no chão (topo da barra de tarefas) do monitor principal.
+  const saved = settings.feet;
+  const feet = saved && Number.isFinite(saved.x) && Number.isFinite(saved.y) && onSomeDisplay(saved)
+    ? saved : defaultFeet();
+  body.place(feet.x, feet.y);
+  const start = boundsForFeet(feet.x, feet.y);
 
   win = new BrowserWindow({
-    width: SIZE,
-    height: SIZE,
-    x: workArea.x + workArea.width - SIZE - MARGIN,
-    y: workArea.y + workArea.height - SIZE - MARGIN,
+    width: start.width,
+    height: start.height,
+    x: start.x,
+    y: start.y,
 
     transparent: true,
     backgroundColor: "#00000000",
@@ -179,23 +304,38 @@ function registerIpc() {
   ipcMain.on("pet:drag-start", () => {
     if (!win) return;
     stopDrag();
+    stopPhysics(); // pegou no ar: para de cair
     const cursor = screen.getCursorScreenPoint();
     const [wx, wy] = win.getPosition();
     const off = { x: cursor.x - wx, y: cursor.y - wy };
+    drag = { t0: Date.now(), start: cursor, samples: [] };
     dragTimer = setInterval(() => {
       if (!win || win.isDestroyed()) return stopDrag();
       const p = screen.getCursorScreenPoint();
-      // setBounds com tamanho explícito, NÃO setPosition: no Windows, com
-      // resizable:false, cada setPosition faz a janela crescer alguns px
-      // (bug do Electron). A 60Hz ela dobrava de tamanho em meio segundo.
-      const x = p.x - off.x, y = p.y - off.y;
-      win.setBounds({ x, y, width: size.w, height: size.h });
-      // A malha precisa da aceleração da janela para balançar como gelatina.
-      win.webContents.send("pet:moved", { x, y });
+      drag.samples.push({ t: Date.now(), x: p.x, y: p.y });
+      if (drag.samples.length > 12) drag.samples.shift();
+      moveTo({ x: p.x - off.x, y: p.y - off.y, width: size.w, height: size.h });
     }, DRAG_TICK_MS);
   });
 
-  ipcMain.on("pet:drag-end", stopDrag);
+  // Soltou: se mal mexeu, foi um clique (o renderer reage); senão o pet sai
+  // com a velocidade do gesto e a gravidade faz o resto.
+  ipcMain.handle("pet:drag-end", () => {
+    if (!dragTimer || !win) return { click: false };
+    stopDrag();
+    const p = screen.getCursorScreenPoint();
+    const click = Math.hypot(p.x - drag.start.x, p.y - drag.start.y) < CLICK_MOVE
+      && Date.now() - drag.t0 < CLICK_MS;
+    const f = feetOf();
+    body.place(f.x, f.y);
+    if (!click) {
+      const v = releaseVelocity(drag.samples);
+      body.throw(v.vx, v.vy);
+    }
+    drag = null;
+    settle();
+    return { click };
+  });
 
   // O renderer não lista diretórios (pet:// só serve arquivo); quem sabe
   // quais PNGs existem é o main.
@@ -233,24 +373,24 @@ function registerIpc() {
     return true;
   });
 
-  // Novo tamanho mantendo os pés (centro da base) no mesmo lugar da tela,
-  // sem sair da área de trabalho. setBounds com tamanho explícito, como no
-  // arraste.
+  // Novo tamanho mantendo os PÉS no mesmo ponto da tela. A janela pode
+  // passar da borda ou cobrir a barra de tarefas: a parte de fora é
+  // transparente e atravessável; quem respeita as bordas é o corpo (physics).
   ipcMain.on("pet:resize", (e, req) => {
     if (!win || e.sender !== win.webContents) return;
-    const w = Math.round(Math.min(MAX_SIZE, Math.max(80, req.w)));
-    const h = Math.round(Math.min(MAX_SIZE, Math.max(80, req.h)));
-    const b = win.getBounds();
-    const area = screen.getDisplayMatching(b).workArea;
-    const x = Math.round(b.x + b.width / 2 - w / 2);
-    const y = b.y + b.height - h;
-    size = { w, h };
-    win.setBounds({
-      x: Math.min(Math.max(x, area.x), area.x + area.width - w),
-      y: Math.min(Math.max(y, area.y), area.y + area.height - h),
-      width: w,
-      height: h,
-    });
+    const num = (v, min, max, def) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def);
+    const feet = feetOf();
+    size = { w: Math.round(num(req.w, 80, MAX_SIZE, SIZE)), h: Math.round(num(req.h, 80, MAX_SIZE, SIZE)) };
+    geom = {
+      foot: num(req.foot, 0, size.h, geom.foot),
+      side: num(req.side, 0, size.w / 2, geom.side),
+      up: num(req.up, 0, size.h, geom.up),
+    };
+    win.setBounds(boundsForFeet(feet.x, feet.y));
+    if (!dragTimer && !physTimer) {
+      body.place(feet.x, feet.y);
+      settle(); // primeira medição ao abrir: confere se está no chão
+    }
   });
 }
 
@@ -308,6 +448,16 @@ function createTray() {
     Menu.buildFromTemplate([
       { label: "Abrir pasta do pet", click: () => shell.openPath(path.join(PETS_DIR, ACTIVE_PET)) },
       { label: "Calibrar tamanho…", click: openCalibrator },
+      {
+        label: "Gravidade",
+        type: "checkbox",
+        checked: settings.gravity,
+        click: (item) => {
+          settings.gravity = item.checked;
+          saveSettings();
+          reanchor(); // ligou: cai de onde está
+        },
+      },
       { label: "Recarregar", click: () => win && win.reload() },
       { type: "separator" },
       { label: "Sair", click: () => app.quit() },
@@ -323,6 +473,15 @@ app.whenReady().then(() => {
   watchPetDir();
   createTray();
   if (process.argv.includes("--calibrate")) openCalibrator(); // atalho de desenvolvimento
+
+  // Monitor plugado/desplugado, resolução, escala ou barra de tarefas mudou.
+  for (const ev of ["display-added", "display-removed", "display-metrics-changed"])
+    screen.on(ev, () => setTimeout(reanchor, 300)); // espera o Windows terminar de rearrumar
+});
+
+app.on("before-quit", () => {
+  if (win && !win.isDestroyed() && !dragTimer) settings.feet = feetOf();
+  saveSettings();
 });
 
 // Sem isto o app morre ao fechar a janela; aqui ele deve viver no tray.

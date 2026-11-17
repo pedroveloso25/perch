@@ -168,6 +168,8 @@ const PetMesh = (() => {
       w: Math.ceil(2 * (side + 12 + 0.15 * up)), // balanço do topo
       h: Math.ceil(up + 45 + 0.12 * up + foot),  // pulo do "done" + esticar no ar
       foot,
+      side: Math.ceil(side), // meia largura e altura visíveis: as bordas da
+      up: Math.ceil(up),     // tela param o corpo, não a janela (physics.js)
     };
   }
 
@@ -239,7 +241,7 @@ const PetMesh = (() => {
 
     const body = { y: 0, vy: 0, air: false };       // y <= 0: altura do pulo
     const sq = { s: 0, v: 0 };                       // s > 0 achata, s < 0 estica
-    const frame = { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, init: false }; // janela na tela
+    const frame = { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, g: 0, init: false }; // janela na tela
     const phase = { breath: 0, sway: 0, bob: 0 };    // fase acumulada: mudar o Hz não dá salto
     let swayLevel = P.swayAmp, bobLevel = 0;
     let hopTimer = 0, hopQueue = 0, hopGap = 0;
@@ -307,11 +309,11 @@ const PetMesh = (() => {
       frame.vx += (rx - frame.vx) * k;
       frame.vy += (ry - frame.vy) * k;
       let ax = (frame.vx - fvx) / dt;
-      let ay = (frame.vy - fvy) / dt;
+      let ay = (frame.vy - fvy) / dt - frame.g; // janela caindo: queda livre não deforma
 
       // Pulo (dentro da janela). Em queda livre tudo cai junto, então a
       // gravidade não deforma; o que deforma é o chão.
-      const vy0 = body.vy, freeFall = body.air && !held;
+      const vy0 = body.vy, freeFall = (body.air || frame.g > 0) && !held;
       if (!held) {
         if (body.air) {
           body.vy += P.gravity * dt;
@@ -333,7 +335,7 @@ const PetMesh = (() => {
 
       // Âncora: o ponto que não balança. Trocá-la de repente não dá salto
       // visual: ela muda força e rigidez, não o deslocamento acumulado.
-      if (!held) { anchorX = 0; anchorY = body.air ? -bodyH * 0.5 : 0; }
+      if (!held) { anchorX = 0; anchorY = freeFall ? -bodyH * 0.5 : 0; }
 
       const w0 = TAU * P.jellyHz, z = P.jellyDamp, gain = P.jellyGain * JELLY_K;
       const hang = held ? P.gravity * P.hangWeight : 0;
@@ -349,7 +351,8 @@ const PetMesh = (() => {
         L[j + 1] += V[j + 1] * dt;
       }
 
-      const stretch = freeFall ? -Math.min(Math.abs(body.vy) * P.stretchK * P.stretchGain, 0.35) : 0;
+      const fallV = body.air ? body.vy : frame.vy;
+      const stretch = freeFall ? -Math.min(Math.abs(fallV) * P.stretchK * P.stretchGain, 0.35) : 0;
       const ws = TAU * P.squashHz;
       sq.v += (-ws * ws * (sq.s - stretch) - 2 * P.squashDamp * ws * sq.v) * dt;
       sq.s = Math.min(0.6, Math.max(-0.45, sq.s + sq.v * dt));
@@ -416,6 +419,30 @@ const PetMesh = (() => {
 
       hop(n = 1) { hopQueue += n; },
 
+      /** A janela pousou no chão a `v` DIP/s: achata (satura em quedas altas). */
+      impact(v) {
+        sq.v += 7 * (1 - Math.exp(-v / 600)) * P.squashGain;
+      },
+
+      /**
+       * "Boop": cutucada em (x, y) da janela. Os vértices perto afundam na
+       * direção do ponto e voltam pela mola da gelatina.
+       */
+      poke(x, y) {
+        if (!sprite) return;
+        const px = x - feetX, py = y - feetY - body.y;
+        const r = 0.45 * Math.max(bodyH, bodyW);
+        for (let i = 0; i < count; i++) {
+          const j = 2 * i, dx = rest[j] - px, dy = rest[j + 1] - py;
+          const d = Math.hypot(dx, dy);
+          if (d >= r) continue;
+          const f = (1 - d / r) ** 2 * 420; // px/s
+          V[j] -= (dx / (d || 1)) * f;
+          V[j + 1] -= (dy / (d || 1)) * f;
+        }
+        sq.v += 1.5 * P.squashGain;
+      },
+
       /** Agarrou em (x, y) da janela: esse ponto vira a âncora. */
       grab(x, y) {
         held = true;
@@ -428,8 +455,8 @@ const PetMesh = (() => {
       release() { held = false; },
 
       /** Posição da janela na tela (DIP), enviada pelo main durante o arraste. */
-      frameMoved(x, y) {
-        frame.x = x; frame.y = y;
+      frameMoved(x, y, g = 0) {
+        frame.x = x; frame.y = y; frame.g = g;
         if (!frame.init) { frame.px = x; frame.py = y; frame.init = true; }
       },
 

@@ -21,6 +21,8 @@ hooks/notify.js ──POST──► daemon/server.js (:4747) ──SSE──► 
 ```
 
 - `daemon/state.js`: lógica de estado com relógio injetado e testável (`npm test` em `daemon/`, node:test, 14 testes).
+- `overlay/physics.js`: corpo do pet na tela (pés em DIP): gravidade, arremesso, paredes/chão da workArea, `releaseVelocity`. Puro, `npm test` em `overlay/` (11 testes). O main roda `step()` num timer e move a janela; manda `pet:moved {x,y,g}` (g>0 = queda livre, a malha desconta) e `pet:landed`.
+- `%APPDATA%\perch\settings.json`: `{ gravity, feet: {x,y} }`, salvo ao parar/sair. `pet:drag-end` é `invoke` e devolve `{ click }` (clique = < 4px e < 350ms); o renderer faz `mesh.poke` + `mesh.hop`.
 - `overlay/main.js`: janela transparente, protocolo `pet://`, IPC de click-through e arraste, bandeja.
 - `overlay/renderer.js`: estado → humor do mesh + classe CSS (opacidade/brilho), escolha de sprite (nomes PT/EN, variações), mouse.
 - `overlay/mesh.js`: motor de malha (WebGL2). Recorte, personagem (maior ilha opaca), `place()` (pet.json → escala/pés), `windowSize()`, molas, hit-test na malha deformada. Não conhece estados. Também é carregado pelo calibrador.
@@ -56,6 +58,8 @@ esses caminhos. Backup do settings original: `%TEMP%\claude-settings.backup.json
 - Dá para gerar sprites de teste (círculo com fundo transparente) com zlib puro no Node e jogar em `%APPDATA%\perch\pets\default\`. Apague depois.
 - `Page.captureScreenshot` TRAVA em janela oculta/encoberta (`document.visibilityState === "hidden"`, comum no calibrador atrás de outras janelas). Use `canvas.toDataURL()` via `Runtime.evaluate`. Com mais de uma janela, escolha o alvo do CDP pela `url` (index.html × calibrate.html).
 - Não deixe `pet.json` de teste na pasta do usuário.
+- O usuário mexe no pet enquanto você testa (aparece como arraste "fantasma" nos logs). Antes de caçar bug de posição, confira se não foi ele.
+- Teste com mouse real: peça ao renderer um ponto opaco (`mesh.hitTest` varrendo a janela) em vez de chutar coordenadas.
 - Ao terminar, encerre o electron e o daemon que você subiu.
 
 ## Estado atual
@@ -74,7 +78,7 @@ inércia ao arrastar, squash/stretch. A pergunta a responder: uma imagem
 qualquer fica convincente animada só pelo sistema? Só depois integra no
 renderer, substituindo ou somando as transforms CSS atuais.
 
-**Fase 1:** salvar a posição (`electron-store`), multi-monitor/DPI misto, gravidade (soltou no ar → cai até a `workArea`), clique sem arrastar = reação.
+**Fase 1 (concluída):** posição salva (settings.json próprio, sem electron-store), gravidade + arremesso, clique = boop + pulo, chão/paredes por monitor e reancoragem quando monitores mudam. Multi-monitor/DPI misto implementado mas só testado com 1 monitor.
 
 **Fase 3:** importar pet arrastando uma imagem ou pelo item "Adicionar pet" no menu da bandeja. Remoção de fundo local (ex.: `@imgly/background-removal`), recorte, normalização e detecção dos "pés" para o pivô. Pacote = pasta com `pet.json` + imagens (zip para compartilhar).
 
@@ -85,5 +89,4 @@ renderer, substituindo ou somando as transforms CSS atuais.
 ## Limitações conhecidas
 
 - Não desenha sobre fullscreen exclusivo (limitação do Windows).
-- Só o monitor primário. Mudança de DPI entre monitores não foi testada.
-- A posição arrastada não persiste.
+- Multi-monitor e DPI misto: código pronto (`areaAt`, `reanchor`, `devicePixelRatio` no resize da malha), nunca testado com 2 monitores.

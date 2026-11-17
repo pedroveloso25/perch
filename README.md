@@ -159,6 +159,22 @@ clicável. Na saída, quem
 devolve o click-through é o main, vigiando o cursor: um movimento rápido que
 pula a borda transparente não gera nenhum evento no renderer.
 
+**Gravidade, arremesso e clique**
+Soltou no ar, o pet cai até o chão, que é o topo da barra de tarefas do
+monitor onde estão os pés. Soltou em movimento, sai com a velocidade do gesto
+(últimos ~100ms), bate nas bordas e desliza até parar. Mal mexeu e soltou
+rápido (< 4px, < 350ms), é um clique: a malha afunda no ponto clicado e o pet
+dá um pulinho. A física roda no main (`overlay/physics.js`, testada com
+`npm test` em `overlay/`), porque é ele que move a janela. A malha recebe a
+posição e desconta a gravidade durante a queda (queda livre não deforma); o
+pouso achata. Bandeja → **Gravidade** desliga: o pet fica onde for solto.
+
+**Por que a posição salva é a dos pés**
+`%APPDATA%\perch\settings.json` guarda o ponto dos pés, não o canto da
+janela: o tamanho da janela muda com as imagens do pet, os pés não. Ao abrir,
+se esse ponto não existe mais em nenhum monitor, o pet volta ao canto do
+monitor principal.
+
 **Por que `setBounds` e não `setPosition` no arraste**
 No Windows, com `resizable: false`, cada `setPosition` faz a janela crescer
 alguns pixels (bug do Electron). A 60Hz ela dobrava de tamanho em meio segundo.
@@ -180,15 +196,15 @@ daemon também só emite em mudança, mas isso agora é economia, não requisito
 ## Limitações conhecidas
 
 - Não desenha sobre aplicação em fullscreen exclusivo (limitação do Windows).
-- Monitor único (usa `getPrimaryDisplay`). Multi-monitor exige escolher display.
-- A posição arrastada não é salva: reiniciou, volta ao canto.
+- Multi-monitor e DPI misto implementados (chão e paredes do monitor onde
+  estão os pés; volta para a tela se o monitor sumir), mas só testados com um
+  monitor.
 - Sem claude.ai (web): não existe hook. Exigiria extensão de browser lendo o
   DOM + native messaging, e quebra a cada deploy do front.
 
 ## Próximos passos óbvios
 
-1. Salvar posição (`electron-store`) e suporte a multi-monitor.
-2. Animação procedural para qualquer imagem (deformação de malha).
-3. Importar pet: arrastar imagem, remover fundo, recortar.
-4. Porte para Tauri v2 (~30MB de RAM contra ~180MB).
-5. Som curto e discreto no `done` — opcional, desligado por padrão.
+1. Importar pet: arrastar imagem, remover fundo, recortar.
+2. Cérebro do pet (passear pela barra, dormir) e fontes de evento plugáveis.
+3. Porte para Tauri v2 (~30MB de RAM contra ~180MB).
+4. Som curto e discreto no `done` — opcional, desligado por padrão.

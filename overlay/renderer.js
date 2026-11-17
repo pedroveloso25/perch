@@ -121,7 +121,7 @@ function fitWindow(height) {
   fallback = placeholder(height);
   const size = PetMesh.windowSize(loaded.size ? [...loaded.values()] : [fallback]);
   mesh.setFootMargin(size.foot);
-  window.overlay.resizeWindow(size.w, size.h); // o "resize" da janela chama mesh.resize
+  window.overlay.resizeWindow(size); // o "resize" da janela chama mesh.resize
 }
 
 // Em ordem: sprite da tool, depois o do estado, depois "pensando", depois
@@ -263,28 +263,38 @@ window.overlay.onMouseLeft(() => {
   canvas.classList.remove("interactive");
 });
 
+let downAt = null; // onde apertou, para a cutucada se for um clique
+
 window.addEventListener("mousedown", (e) => {
   if (e.button !== 0 || !interactive) return;
   dragging = true;
+  downAt = { x: e.clientX, y: e.clientY };
   canvas.classList.add("dragging");
   mesh.grab(e.clientX, e.clientY);
   window.overlay.dragStart();
   wake();
 });
 
-function endDrag() {
+// Quem decide se foi clique ou arraste é o main: a janela anda junto com o
+// cursor, então daqui o mouse parece nunca ter saído do lugar.
+async function endDrag() {
   if (!dragging) return;
   dragging = false;
   canvas.classList.remove("dragging");
   mesh.release();
-  window.overlay.dragEnd();
+  const { click } = await window.overlay.dragEnd().catch(() => ({ click: false }));
+  if (click && downAt) {
+    mesh.poke(downAt.x, downAt.y); // "boop"
+    mesh.hop(1);
+  }
   wake();
 }
 window.addEventListener("mouseup", endDrag);
 window.addEventListener("blur", endDrag);
 
 // A janela andou (arraste): a malha sente a aceleração e balança.
-window.overlay.onMoved((p) => mesh.frameMoved(p.x, p.y));
+window.overlay.onMoved((p) => mesh.frameMoved(p.x, p.y, p.g));
+window.overlay.onLanded((v) => mesh.impact(v));
 window.overlay.onSpritesChanged(refreshSprites);
 
 refreshSprites().then(connect);

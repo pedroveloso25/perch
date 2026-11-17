@@ -67,8 +67,10 @@ terminar) pode usar os mesmos eventos de sessão dos hooks (`working`,
 
 ### App instalado (o jeito normal)
 
-1. Gere o instalador (ou baixe de uma release): em `overlay/`,
-   `npm install` e `npm run dist` → `overlay/dist/Perch Setup <versão>.exe`.
+1. Baixe o `Perch Setup <versão>.exe` da página de
+   [Releases](https://github.com/pedroveloso25/perch/releases), ou gere o
+   instalador: em `overlay/`, `npm install` e `npm run dist` →
+   `overlay/dist/Perch Setup <versão>.exe`.
 2. Rode o instalador. Ele instala só para o seu usuário (sem administrador) em
    `%LOCALAPPDATA%\Programs\Perch`. Não é assinado: o Windows SmartScreen
    avisa na primeira vez ("Mais informações" → "Executar assim mesmo").
@@ -283,7 +285,7 @@ daemon também só emite em mudança, mas isso agora é economia, não requisito
 
 ## Próximos passos óbvios
 
-1. Publicar releases no GitHub com o instalador (e, um dia, assinar o .exe).
+1. Assinar o .exe (some o aviso do SmartScreen) e atualização automática.
 2. Remoção de fundo por IA local para fotos (modelo Apache/MIT; evitar
    `@imgly/background-removal`, que é AGPL).
 3. Porte para Tauri v2 (~30MB de RAM contra ~180MB).

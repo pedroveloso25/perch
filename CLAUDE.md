@@ -94,6 +94,7 @@ renderer, substituindo ou somando as transforms CSS atuais.
 **Fase 4 (concluída):** cérebro (parado/passeia/dorme/acorda, modo pet na bandeja, padrão visível) e reações de outras fontes (`hooks/perch.js`). Testado: passeio real (~70 px/s, pausas, fica no chão), parado com o Claude trabalhando, acorda com input, reações via CLI. O usuário vai fornecer `dormindo.png`.
 
 **Fase 5 (concluída):** instalador NSIS (78 MB, não assinado), daemon embutido, configurações, autostart, conectar ao Claude Code, Passarinho de fábrica. Testado: app empacotado (`dist/win-unpacked/Perch.exe`) sobe o daemon, carrega os pets, perch.js de resources chega no daemon, status "other" com os hooks ainda no repo. NÃO testado: rodar o instalador, clicar Conectar (regravaria o settings do usuário) e ligar o autostart (escreve no registro). O usuário vai instalar e conectar.
+- Release `v0.1.0` publicada no GitHub (instalador montado a partir do `57d9273`, SHA-256 `14d0f9a8…d995`). Sem `gh` nesta máquina: a release é feita à mão pelo site, e o texto vai pronto. Nova versão = subir `version` no `overlay/package.json` e rodar `npm run dist`.
 - Build: o `winCodeSign` do electron-builder falha sem Modo de Desenvolvedor (symlinks de macOS). Contorno usado: extrair o .7z em `Cache/winCodeSign/winCodeSign-2.6.0` aceitando o erro dos 2 symlinks.
 - Avaliar Tauri v2 depois (instalador ~78 MB e ~180 MB de RAM com Electron).
 

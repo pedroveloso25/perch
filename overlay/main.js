@@ -1,10 +1,12 @@
 const {
-  app, BrowserWindow, screen, Tray, Menu, nativeImage, ipcMain, protocol, net, shell,
+  app, BrowserWindow, screen, Tray, Menu, nativeImage, ipcMain, protocol, net, shell, dialog,
 } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const { createBody, releaseVelocity, DEFAULTS: PHYSICS } = require("./physics");
+const { createPets } = require("./pets");
+const { writeZip, readZip } = require("./zip");
 
 // Tamanho inicial da janela em DIP. O renderer pede o tamanho certo
 // (pet:resize) assim que mede as imagens do pet: cabe a maior delas, com
@@ -25,7 +27,7 @@ const SETTINGS_FILE = path.join(app.getPath("userData"), "settings.json");
 // Pets moram fora do app (em %APPDATA%), não ao lado do código: depois de
 // empacotado o código vira um .asar somente-leitura e "../sprites" não existe.
 const PETS_DIR = path.join(app.getPath("userData"), "pets");
-const ACTIVE_PET = "default";
+const pets = createPets(PETS_DIR);
 
 // Precisa acontecer antes do 'ready'. corsEnabled + o header ACAO no handler
 // deixam o renderer ler os pixels da imagem (getImageData) sem "tainted canvas"
@@ -52,7 +54,7 @@ const body = createBody();
 // ---------------------------------------------------------------------------
 
 // Arquivo próprio em vez de electron-store: são duas chaves.
-let settings = { gravity: true, feet: null };
+let settings = { gravity: true, feet: null, activePet: "default" };
 try {
   settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
 } catch {}
@@ -158,38 +160,35 @@ function reanchor() {
   settle();
 }
 
-function ensurePetDir() {
-  const dir = path.join(PETS_DIR, ACTIVE_PET);
-  fs.mkdirSync(dir, { recursive: true });
-  const readme = path.join(dir, "LEIA-ME.txt");
-  if (!fs.existsSync(readme)) {
-    fs.writeFileSync(readme, [
-      "Coloque aqui os PNGs do pet (fundo transparente). Nomes aceitos:",
-      "",
-      "  pensando   (ou working, trabalhando)   o Claude está trabalhando",
-      "  permissao  (ou blocked, bloqueado)     esperando você",
-      "  finalizado (ou done, pronto)           terminou",
-      "  parado     (ou idle)                   opcional, o pet some em repouso",
-      "",
-      "  Opcionais por ferramenta: lendo/sherlock (Read, Grep, Glob),",
-      "  terminal/cooking (Bash), editando (Edit, Write).",
-      "",
-      "Variações numeradas (pensando1.png, pensando2.png...) são sorteadas.",
-      "O recorte, o tamanho e o alinhamento pelos pés são automáticos; para",
-      "ajustar, use 'Calibrar tamanho' no ícone da bandeja (grava pet.json).",
-      "Arquivos novos aparecem sozinhos; sem imagem, aparece um quadrado laranja.",
-      "",
-    ].join("\r\n"));
-  }
+// Pet ativo: o da última vez, se a pasta ainda existe; senão "default".
+function activePet() {
+  return pets.exists(settings.activePet) ? settings.activePet : "default";
 }
 
-// pet://<nome-do-pet>/<arquivo>  ->  %APPDATA%/perch/pets/<nome>/<arquivo>
+// Avisa overlay e editor que o pet (imagens, pet.json ou qual pet) mudou.
+function notifyPetChanged() {
+  for (const w of [win, calibrator])
+    if (w && !w.isDestroyed()) w.webContents.send("pet:sprites-changed");
+}
+
+function setActivePet(pet) {
+  if (!pets.exists(pet)) throw new Error("pet não existe: " + pet);
+  settings.activePet = pet;
+  saveSettings();
+  watchPetDir();
+  rebuildTray();
+  notifyPetChanged();
+}
+
+// pet://p/<pet>/<arquivo>  ->  %APPDATA%/perch/pets/<pet>/<arquivo>
+// O nome do pet vai no caminho, não no host: o host de um esquema "standard"
+// é normalizado (minúsculas, sem espaço) e "Pássaro Azul" viraria outra coisa.
 function registerPetProtocol() {
   protocol.handle("pet", async (req) => {
-    const { host, pathname } = new URL(req.url);
-    const file = path.resolve(PETS_DIR, host, "." + decodeURIComponent(pathname));
+    const { pathname } = new URL(req.url);
+    const file = path.resolve(PETS_DIR, "." + decodeURIComponent(pathname));
 
-    // Sem isto, pet://default/../../../Windows/... leria qualquer arquivo.
+    // Sem isto, pet://p/../../../Windows/... leria qualquer arquivo.
     if (!file.startsWith(PETS_DIR + path.sep)) return new Response(null, { status: 403 });
 
     const res = await net.fetch(pathToFileURL(file).toString()).catch(() => null);
@@ -341,37 +340,64 @@ function registerIpc() {
   // quais PNGs existem é o main.
   // mtime vai junto para o renderer saber quando reanalisar uma imagem.
   ipcMain.handle("pet:list", () => {
-    const dir = path.join(PETS_DIR, ACTIVE_PET);
-    try {
-      return fs.readdirSync(dir)
-        .filter((f) => /\.png$/i.test(f))
-        .map((name) => ({ name, mtime: fs.statSync(path.join(dir, name)).mtimeMs }));
-    } catch {
-      return [];
-    }
+    const pet = activePet();
+    return { pet, files: pets.files(pet) };
   });
 
-  ipcMain.handle("pet:config", () => {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(PETS_DIR, ACTIVE_PET, "pet.json"), "utf8"));
-    } catch {
-      return {}; // sem pet.json (ou inválido): tudo no palpite automático
-    }
-  });
+  ipcMain.handle("pet:config", () => pets.readConfig(activePet()));
 
-  // Só o calibrador grava. Valida o formato: o overlay relê o arquivo a cada
-  // mudança na pasta e ele não pode virar lixo.
+  // Só o editor grava (pets.js valida: o overlay relê o arquivo a cada
+  // mudança na pasta e ele não pode virar lixo).
   ipcMain.handle("pet:save-config", (_e, cfg) => {
-    const out = { version: 1, images: {} };
-    if (Number.isFinite(cfg?.height) && cfg.height > 0) out.height = cfg.height;
-    for (const [name, e] of Object.entries(cfg?.images || {})) {
-      if (!/^[^\\/:*?"<>|]+\.png$/i.test(name)) continue;
-      if (!Number.isFinite(e?.scale) || e.scale <= 0 || !Number.isFinite(e?.floor)) continue;
-      out.images[name] = { scale: e.scale, floor: e.floor };
-    }
-    fs.writeFileSync(path.join(PETS_DIR, ACTIVE_PET, "pet.json"), JSON.stringify(out, null, 2));
+    pets.writeConfig(activePet(), cfg);
     return true;
   });
+
+  // --- Editor de pet (Fase 3). Erros voltam como { error } para a tela. ---
+  const guard = (fn) => async (_e, ...args) => {
+    try { return { ok: await fn(...args) }; } catch (err) { return { error: err.message }; }
+  };
+
+  ipcMain.handle("pet:pets", () => ({ active: activePet(), pets: pets.list() }));
+  ipcMain.handle("pet:set-active", guard((pet) => setActivePet(pet)));
+  ipcMain.handle("pet:create", guard((pet) => {
+    if (pets.exists(pet)) throw new Error("já existe um pet com esse nome");
+    pets.ensure(pet);
+    setActivePet(pet);
+    return pet;
+  }));
+  ipcMain.handle("pet:add-image", guard((base, bytes) =>
+    pets.addImage(activePet(), base, Buffer.from(bytes))));
+  ipcMain.handle("pet:rename-image", guard((file, base) => pets.renameImage(activePet(), file, base)));
+  // Lixeira, não apagar: o usuário pode se arrepender.
+  ipcMain.handle("pet:remove-image", guard((file) =>
+    pets.removeImage(activePet(), file, (p) => shell.trashItem(p))));
+
+  ipcMain.handle("pet:export", guard(async () => {
+    const pet = activePet();
+    const { canceled, filePath } = await dialog.showSaveDialog(calibrator || undefined, {
+      title: "Exportar pet",
+      defaultPath: path.join(app.getPath("documents"), pet + ".zip"),
+      filters: [{ name: "Pet do perch", extensions: ["zip"] }],
+    });
+    if (canceled || !filePath) return null;
+    fs.writeFileSync(filePath, writeZip(pets.exportEntries(pet)));
+    return filePath;
+  }));
+
+  ipcMain.handle("pet:import", guard(async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(calibrator || undefined, {
+      title: "Importar pet",
+      filters: [{ name: "Pet do perch", extensions: ["zip"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || !filePaths?.length) return null;
+    const zip = filePaths[0];
+    if (fs.statSync(zip).size > 300 * 1024 * 1024) throw new Error("arquivo grande demais");
+    const pet = pets.importEntries(readZip(fs.readFileSync(zip)), path.basename(zip, path.extname(zip)));
+    setActivePet(pet);
+    return pet;
+  }));
 
   // Novo tamanho mantendo os PÉS no mesmo ponto da tela. A janela pode
   // passar da borda ou cobrir a barra de tarefas: a parte de fora é
@@ -399,7 +425,7 @@ function openCalibrator() {
   calibrator = new BrowserWindow({
     width: 1100,
     height: 760,
-    title: "Perch · calibrar tamanho",
+    title: "Perch · editar pet",
     autoHideMenuBar: true,
     backgroundColor: "#14161f",
     webPreferences: {
@@ -412,16 +438,17 @@ function openCalibrator() {
 }
 
 // Imagem nova ou trocada na pasta aparece sem reiniciar. Debounce porque
-// copiar um arquivo dispara vários eventos seguidos.
+// copiar um arquivo dispara vários eventos seguidos. Trocou de pet: vigia a
+// pasta nova.
+let watcher = null;
 function watchPetDir() {
+  watcher?.close();
+  watcher = null;
   let timer = null;
   try {
-    fs.watch(path.join(PETS_DIR, ACTIVE_PET), () => {
+    watcher = fs.watch(pets.ensure(activePet()), () => {
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        for (const w of [win, calibrator])
-          if (w && !w.isDestroyed()) w.webContents.send("pet:sprites-changed");
-      }, 300);
+      timer = setTimeout(notifyPetChanged, 300);
     });
   } catch {}
 }
@@ -444,10 +471,26 @@ function trayIcon() {
 function createTray() {
   tray = new Tray(trayIcon());
   tray.setToolTip("Perch");
+  rebuildTray();
+}
+
+// Reconstruído quando a lista de pets ou o ativo muda (o submenu é estático).
+function rebuildTray() {
+  if (!tray) return;
+  const active = activePet();
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Abrir pasta do pet", click: () => shell.openPath(path.join(PETS_DIR, ACTIVE_PET)) },
-      { label: "Calibrar tamanho…", click: openCalibrator },
+      {
+        label: "Pet",
+        submenu: pets.list().map((pet) => ({
+          label: pet,
+          type: "radio",
+          checked: pet === active,
+          click: () => setActivePet(pet),
+        })),
+      },
+      { label: "Editar pet…", click: openCalibrator },
+      { label: "Abrir pasta do pet", click: () => shell.openPath(pets.dirOf(active)) },
       {
         label: "Gravidade",
         type: "checkbox",
@@ -466,7 +509,7 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
-  ensurePetDir();
+  pets.ensure("default");
   registerPetProtocol();
   registerIpc();
   createWindow();

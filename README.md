@@ -73,9 +73,27 @@ disso, cliques atravessam para a janela de trás.
 
 ## Sprites
 
+O jeito fácil é a bandeja → **Editar pet…**:
+
+- **Adicionar imagens** (ou solte PNG/JPG na janela). Cada imagem passa por
+  uma prévia: escolha o estado (o nome do arquivo dá o palpite), e a remoção
+  de fundo apaga a cor que encosta nas bordas da imagem (branco de imagem
+  gerada por IA, cor chapada de pixel art). Tolerância ajustável; clicar no
+  fundo da prévia escolhe a cor; "buracos fechados" remove também o vão
+  entre as pernas quando ele não encosta na borda. Não é IA: foto com fundo
+  complexo não sai limpa.
+- No cartão de cada imagem: trocar o estado (renomeia o arquivo) ou mandar
+  para a Lixeira.
+- **Vários pets**: cada um é uma pasta; "Novo pet" cria, o seletor (ou a
+  bandeja → **Pet**) troca o ativo.
+- **Exportar / Importar .zip** para compartilhar um pet (imagens +
+  `pet.json`). A importação aceita só PNG e `pet.json`, achata pastas,
+  nunca sobrescreve um pet existente e recusa zip bomb.
+
 Os pets moram em `%APPDATA%\perch\pets\<nome>\` (bandeja → **Abrir pasta
 do pet**), não ao lado do código — empacotado, o código vira um `.asar`
-somente-leitura. O overlay lê de lá pelo protocolo `pet://`.
+somente-leitura. O overlay lê de lá pelo protocolo `pet://`. Dá para mexer
+direto na pasta também, com estes nomes:
 
 | Estado | Nomes aceitos |
 |---|---|
@@ -102,7 +120,7 @@ para a mesma altura em todas as imagens e apoia os pés dele no chão.
 
 O automático erra quando o personagem está grudado em outra coisa (paraquedas
 preso pelas cordas) ou usa chapéu (o chapéu conta como altura). Para isso:
-bandeja → **Calibrar tamanho…**. Todas as imagens aparecem lado a lado no
+bandeja → **Editar pet…**. Todas as imagens aparecem lado a lado no
 mesmo chão, com uma linha de altura alvo; roda do mouse ajusta o tamanho,
 arrastar ajusta o chão, duplo clique volta ao automático. Salvar grava
 `pet.json` na pasta do pet e o overlay atualiza na hora:
@@ -204,7 +222,8 @@ daemon também só emite em mudança, mas isso agora é economia, não requisito
 
 ## Próximos passos óbvios
 
-1. Importar pet: arrastar imagem, remover fundo, recortar.
-2. Cérebro do pet (passear pela barra, dormir) e fontes de evento plugáveis.
+1. Cérebro do pet (passear pela barra, dormir) e fontes de evento plugáveis.
+2. Remoção de fundo por IA local para fotos (modelo Apache/MIT; evitar
+   `@imgly/background-removal`, que é AGPL).
 3. Porte para Tauri v2 (~30MB de RAM contra ~180MB).
 4. Som curto e discreto no `done` — opcional, desligado por padrão.

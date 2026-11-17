@@ -26,7 +26,10 @@ hooks/notify.js ──POST──► daemon/server.js (:4747) ──SSE──► 
 - `overlay/main.js`: janela transparente, protocolo `pet://`, IPC de click-through e arraste, bandeja.
 - `overlay/renderer.js`: estado → humor do mesh + classe CSS (opacidade/brilho), escolha de sprite (nomes PT/EN, variações), mouse.
 - `overlay/mesh.js`: motor de malha (WebGL2). Recorte, personagem (maior ilha opaca), `place()` (pet.json → escala/pés), `windowSize()`, molas, hit-test na malha deformada. Não conhece estados. Também é carregado pelo calibrador.
-- `overlay/calibrate.html/.js`: janela "Calibrar tamanho…" (bandeja, ou `npx electron . --calibrate`). Grava `pet.json` via IPC `pet:save-config` (o main valida o formato).
+- Editor de pet (bandeja "Editar pet…", ou `npx electron . --calibrate`): `calibrate.html` + `calibrate.js` (palco, tamanho/chão, cartões com estado e Lixeira) + `editor.js` (pet ativo, novo pet, zip, tela de importação). Erros dos IPCs do editor voltam como `{ error }`; use `flash()` para mostrá-los (o `updateStatus` esconde mensagem quando há alteração pendente).
+- `overlay/pets.js`: pastas de pet (fs puro, testado): nomes válidos, `nextName` (pensando4.png...), add/rename/remove (rename e remove levam o pet.json junto), export/import. Tudo que vem do renderer ou de um zip passa por aqui.
+- `overlay/zip.js` (escrita stored, leitura stored/deflate, limites contra zip bomb) e `overlay/bgremove.js` (flood fill a partir da borda + alfa do contorno por razão de distâncias; roda no navegador e no Node). Ambos testados.
+- Vários pets: `settings.activePet`; URL `pet://p/<pet>/<arquivo>` (`PetMesh.url`). O nome vai no CAMINHO porque o host de esquema standard é normalizado (minúsculas) e quebraria "Pássaro Azul".
 - `pet.json` (na pasta do pet): `height` + por imagem `scale` (px tela / px original) e `floor` (px originais da base da imagem até os pés). Sem entrada = palpite automático.
 - A janela do overlay é dimensionada pelo renderer (`pet:resize`) para caber TODAS as imagens com os pés fixos no centro da base; o main guarda o tamanho em `size` e o arraste usa ele.
 - Pets: `%APPDATA%\perch\pets\<nome>\*.png`. O pet ativo é fixo em `"default"` (constante duplicada em main.js e renderer.js; vira config na Fase 1/3).
@@ -80,7 +83,7 @@ renderer, substituindo ou somando as transforms CSS atuais.
 
 **Fase 1 (concluída):** posição salva (settings.json próprio, sem electron-store), gravidade + arremesso, clique = boop + pulo, chão/paredes por monitor e reancoragem quando monitores mudam. Multi-monitor/DPI misto implementado mas só testado com 1 monitor.
 
-**Fase 3:** importar pet arrastando uma imagem ou pelo item "Adicionar pet" no menu da bandeja. Remoção de fundo local (ex.: `@imgly/background-removal`), recorte, normalização e detecção dos "pés" para o pivô. Pacote = pasta com `pet.json` + imagens (zip para compartilhar).
+**Fase 3 (concluída):** editor de pet com importação de imagens (remoção de fundo por preenchimento a partir das bordas — escolha do usuário: sem dependência; `@imgly` foi descartado por ser AGPL), vários pets, zip. Soltar imagem direto no pet do overlay NÃO funciona (janela atravessável não recebe drop): o caminho é o editor. Exportar/importar .zip foi testado só nos testes unitários (o diálogo nativo não dá para automatizar).
 
 **Fase 4:** cérebro do pet (idle → wander pela barra → sleep → react) e fontes de evento plugáveis via daemon (o Claude Code é uma delas).
 

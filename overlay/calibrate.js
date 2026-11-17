@@ -1,12 +1,12 @@
-/* Calibrador de tamanho (bandeja → "Calibrar tamanho…").
+/* Editor de pet, parte de calibração (bandeja → "Editar pet…").
 
    Mostra todas as imagens do pet lado a lado, apoiadas no mesmo chão e na
    escala real do overlay. O palpite inicial é o automático do mesh.js (a
    maior ilha opaca é o personagem); aqui o usuário corrige o que errar e
    salva no pet.json. Unidades do arquivo: scale = px da tela por px da
-   imagem original; floor = px originais entre a base da imagem e os pés. */
+   imagem original; floor = px originais entre a base da imagem e os pés.
+   Trocar de pet, importar imagem e zip: editor.js. */
 
-const PET = "default";
 const GAP = 48;          // espaço entre imagens no palco, px da tela
 const PAD = 24;
 const LABEL_H = 44;      // nomes embaixo do chão
@@ -32,30 +32,57 @@ const collator = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base"
 // Carregar / salvar
 // ---------------------------------------------------------------------------
 
-async function load() {
-  const [files, cfg] = await Promise.all([
-    window.overlay.listSprites().catch(() => []),
+let currentPet = null;
+const analyzedCache = new Map(); // "pet/arquivo:mtime" -> Promise<sprite>
+let loadSeq = 0;
+
+/* Relê a pasta. Ajustes ainda não salvos das imagens que continuam lá são
+   mantidos: adicionar, remover ou trocar o estado de uma imagem recarrega
+   tudo e não pode apagar o que você estava calibrando nas outras. */
+async function load({ discard = false } = {}) {
+  const seq = ++loadSeq;
+  const [{ pet, files }, cfg] = await Promise.all([
+    window.overlay.listSprites().catch(() => ({ pet: "default", files: [] })),
     window.overlay.readConfig().catch(() => ({})),
   ]);
-  height = cfg.height > 0 ? cfg.height : PetMesh.DEFAULT_HEIGHT;
-  const names = files.map((f) => f.name).sort(collator.compare);
-  const loaded = await Promise.all(names.map(async (name) => {
+  const keep = !discard && pet === currentPet && dirty();
+  const edits = keep ? new Map(items.map((it) => [it.name, it.e])) : new Map();
+  const keptHeight = height;
+
+  const loaded = await Promise.all(files.sort((a, b) => collator.compare(a.name, b.name)).map(async ({ name, mtime }) => {
+    const key = `${pet}/${name}:${mtime}`;
+    if (!analyzedCache.has(key)) analyzedCache.set(key, PetMesh.load(PetMesh.url(pet, name)));
     try {
-      const s = await PetMesh.load(`pet://${PET}/${encodeURIComponent(name)}`);
-      return { name, s };
+      return { name, s: await analyzedCache.get(key) };
     } catch {
+      analyzedCache.delete(key);
       return null;
     }
   }));
+  if (seq !== loadSeq) return; // um load mais novo já começou
+
+  currentPet = pet;
+  height = cfg.height > 0 ? cfg.height : PetMesh.DEFAULT_HEIGHT;
   items = loaded.filter(Boolean).map((it) => {
     const saved = cfg.images?.[it.name];
     const e = saved && saved.scale > 0 ? { scale: saved.scale, floor: saved.floor || 0 } : PetMesh.autoEntry(it.s, height);
     return { ...it, e };
   });
+  savedJson = serialize(); // o que está no disco
+  if (keep) {
+    // Imagem que chegou agora (sem ajuste pendente) segue a altura que está
+    // na tela, como se o slider de altura tivesse sido movido com ela lá.
+    const f = keptHeight / height;
+    height = keptHeight;
+    for (const it of items) {
+      if (edits.has(it.name)) it.e = edits.get(it.name);
+      else it.e = { ...it.e, scale: it.e.scale * f };
+    }
+  }
   selected = Math.min(selected, Math.max(0, items.length - 1));
-  savedJson = serialize();
   buildCards();
   syncAll();
+  document.title = `Perch · editar pet · ${pet}`;
 }
 
 function serialize() {
@@ -233,7 +260,7 @@ stage.addEventListener("dblclick", (e) => {
 });
 
 addEventListener("keydown", (e) => {
-  if (!items.length || e.target.tagName === "INPUT") return;
+  if (!items.length || /^(INPUT|SELECT)$/.test(e.target.tagName) || $("import").classList.contains("open")) return;
   const it = items[selected];
   const step = e.shiftKey ? 10 : 1; // px da tela
   if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -259,24 +286,73 @@ function resetToAuto(i) {
 // Cartões (controles finos por imagem)
 // ---------------------------------------------------------------------------
 
+// Estados que o editor oferece ao adicionar/trocar uma imagem. O nome do
+// arquivo vira <base><n>.png; o overlay (renderer.js → NAMES/TOOL_NAMES)
+// reconhece estas bases.
+const PET_STATES = [
+  ["pensando", "Pensando (trabalhando)"],
+  ["permissao", "Precisando de permissão"],
+  ["finalizado", "Finalizado"],
+  ["parado", "Parado (opcional)"],
+  ["lendo", "Lendo (Read, Grep, Glob)"],
+  ["terminal", "Terminal (Bash)"],
+  ["editando", "Editando (Edit, Write)"],
+];
+
+/** "Pensando2.png" -> "pensando" (mesma regra do renderer). */
+function baseOf(file) {
+  const n = file.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const m = n.match(/^(.*?)[\s_-]*\d*\.png$/);
+  return m ? m[1] : "";
+}
+
+function stateSelect(current) {
+  const sel = document.createElement("select");
+  const known = PET_STATES.some(([v]) => v === current);
+  for (const [v, label] of known ? PET_STATES : [[current, current], ...PET_STATES]) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    sel.append(o);
+  }
+  sel.value = current;
+  return sel;
+}
+
 function buildCards() {
   const host = $("cards");
   host.replaceChildren();
   if (!items.length) {
-    host.innerHTML = `<div class="empty">Nenhum PNG na pasta do pet. Use "Abrir pasta do pet" na bandeja.</div>`;
+    host.innerHTML = `<div class="empty">Este pet ainda não tem imagens. Solte PNG/JPG aqui ou use "Adicionar imagens".</div>`;
     return;
   }
   items.forEach((it, i) => {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
-      <div class="top"><span class="name"></span><span class="auto"></span><button>Auto</button></div>
+      <div class="top"><span class="name"></span><span class="auto"></span><button class="reset">Auto</button><button class="del" title="Mover para a Lixeira">✕</button></div>
+      <div class="row state"><span>Estado</span></div>
       <div class="row"><span>Tamanho</span><input type="range" class="size" min="-2" max="2" step="0.005"><output class="sizeOut"></output></div>
       <div class="row"><span>Chão</span><input type="range" class="floor" min="-150" max="150" step="1"><output class="floorOut"></output></div>`;
     card.querySelector(".name").textContent = it.name;
     card.querySelector(".name").title = it.name;
     card.addEventListener("pointerdown", () => { if (selected !== i) select(i); });
-    card.querySelector("button").addEventListener("click", () => resetToAuto(i));
+    card.querySelector(".reset").addEventListener("click", () => resetToAuto(i));
+
+    // Trocar o estado renomeia o arquivo (o main leva o ajuste do pet.json).
+    const sel = stateSelect(baseOf(it.name));
+    card.querySelector(".state").append(sel);
+    sel.addEventListener("change", async () => {
+      const r = await window.overlay.renameImage(it.name, sel.value);
+      if (r.error) return flash(r.error, true);
+      it.name = r.ok; // o recarregamento acha o ajuste não salvo pelo nome novo
+      load();
+    });
+    card.querySelector(".del").addEventListener("click", async () => {
+      const r = await window.overlay.removeImage(it.name);
+      if (r.error) return flash(r.error, true);
+      flash(`${it.name} foi para a Lixeira.`);
+      load();
+    });
     // Tamanho em escala log: 25% a 400% do palpite automático.
     card.querySelector(".size").addEventListener("input", (e) => {
       it.e.scale = autoOf(it).scale * 2 ** +e.target.value;
@@ -305,7 +381,15 @@ function syncCard(it) {
   it.card.querySelector(".auto").textContent = isAuto ? "automático" : "";
 }
 
+/** Mensagem que aparece mesmo com alterações pendentes (erros, avisos). */
+function flash(msg, error = false) {
+  $("status").textContent = msg;
+  $("status").classList.toggle("error", error);
+  $("status").classList.remove("dirty");
+}
+
 function updateStatus(msg) {
+  $("status").classList.remove("error");
   const d = dirty();
   $("status").textContent = msg && !d ? msg : d ? "Alterações não salvas" : "Tudo salvo";
   $("status").classList.toggle("dirty", d);
@@ -346,11 +430,12 @@ $("autoAll").addEventListener("click", () => {
   for (const it of items) it.e = autoOf(it);
   syncAll();
 });
-$("discard").addEventListener("click", load);
+$("discard").addEventListener("click", () => load({ discard: true }));
 $("save").addEventListener("click", save);
 
 addEventListener("resize", () => { relayout(); draw(); });
 // Imagem nova na pasta: recarrega, mas nunca por cima de ajuste não salvo.
-window.overlay.onSpritesChanged(() => { if (!dirty()) load(); });
+// Pasta mudou (imagem nova, outro pet ativo): recarrega mantendo os ajustes.
+window.overlay.onSpritesChanged(() => load());
 
 load();

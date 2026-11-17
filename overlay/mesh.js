@@ -150,6 +150,9 @@ const PetMesh = (() => {
 
   const load = (url) => loadImage(url).then(analyze);
 
+  /** pet://p/<pet>/<arquivo> (ver registerPetProtocol no main). */
+  const url = (pet, file) => `pet://p/${encodeURIComponent(pet)}/${encodeURIComponent(file)}`;
+
   /**
    * Janela que cabe todas as imagens com os pés no mesmo ponto (centro, a
    * `foot` px da base), com folga para pulo, balanço e o que fica abaixo dos
@@ -504,5 +507,5 @@ const PetMesh = (() => {
     };
   }
 
-  return { DEFAULT_HEIGHT, analyze, autoEntry, place, load, windowSize, create };
+  return { DEFAULT_HEIGHT, analyze, autoEntry, place, load, url, windowSize, create };
 })();

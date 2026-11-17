@@ -1,5 +1,4 @@
 const PORT = 4747;
-const PET = "default"; // pasta em %APPDATA%/perch/pets/
 const STATES = ["idle", "working", "done", "blocked"];
 const ALPHA_HIT = 32; // 0-255: abaixo disso o pixel é "fundo" e o clique atravessa
 const VARIANT_ROTATE_MS = 30_000; // estado longo com várias imagens: troca de vez em quando
@@ -68,16 +67,19 @@ function baseName(file) {
    mtime, então salvar o pet.json não reanalisa nada. */
 async function refreshSprites() {
   const seq = ++refreshSeq;
-  const [files, config] = await Promise.all([
-    window.overlay.listSprites().catch(() => []),
+  const [{ pet, files }, config] = await Promise.all([
+    window.overlay.listSprites().catch(() => ({ pet: "default", files: [] })),
     window.overlay.readConfig().catch(() => ({})),
   ]);
   const height = config.height > 0 ? config.height : PetMesh.DEFAULT_HEIGHT;
   const images = config.images || {};
 
+  const keys = new Set(files.map(({ name, mtime }) => `${pet}/${name}:${mtime}`));
+  for (const key of analyzed.keys()) if (!keys.has(key)) analyzed.delete(key); // trocou de pet ou de arquivo
+
   const results = await Promise.all(files.map(async ({ name, mtime }) => {
-    const key = name + ":" + mtime;
-    if (!analyzed.has(key)) analyzed.set(key, PetMesh.load("pet://" + PET + "/" + encodeURIComponent(name)));
+    const key = `${pet}/${name}:${mtime}`;
+    if (!analyzed.has(key)) analyzed.set(key, PetMesh.load(PetMesh.url(pet, name)));
     try {
       const s = await analyzed.get(key);
       return [name, { s, p: PetMesh.place(s, images[name], height) }];

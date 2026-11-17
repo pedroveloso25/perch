@@ -112,4 +112,15 @@ function createBrain(opts = {}) {
   };
 }
 
-module.exports = { createBrain, DEFAULTS };
+/**
+ * Trecho do chão onde o pet pode passear: a "casa" (onde ele foi solto por
+ * último) ± radius, cortado pelos limites da tela. Casa fora da tela vira o
+ * ponto mais próximo dentro dela. radius = Infinity: o chão inteiro.
+ */
+function roamBounds(home, radius, minX, maxX) {
+  if (!Number.isFinite(home) || !(radius < Infinity)) return { minX, maxX };
+  const h = Math.min(maxX, Math.max(minX, home));
+  return { minX: Math.max(minX, h - radius), maxX: Math.min(maxX, h + radius) };
+}
+
+module.exports = { createBrain, roamBounds, DEFAULTS };

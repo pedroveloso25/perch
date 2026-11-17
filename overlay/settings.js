@@ -25,6 +25,7 @@ function render(c) {
   $("sleepAfterMin").value = c.sleepAfterMin;
   $("sleepOut").textContent = `${c.sleepAfterMin} min`;
   $("walkiness").value = c.walkiness;
+  $("roam").value = c.roam;
   $("autostart").checked = c.autostart;
   $("autostart").disabled = !c.autostartAvailable;
   if (!c.autostartAvailable) $("autostartHint").textContent = "Disponível só no app instalado.";
@@ -59,6 +60,7 @@ async function set(patch) {
 $("petMode").addEventListener("change", (e) => set({ petMode: e.target.checked }));
 $("gravity").addEventListener("change", (e) => set({ gravity: e.target.checked }));
 $("walkiness").addEventListener("change", (e) => set({ walkiness: e.target.value }));
+$("roam").addEventListener("change", (e) => set({ roam: e.target.value }));
 $("autostart").addEventListener("change", (e) => set({ autostart: e.target.checked }));
 $("sleepAfterMin").addEventListener("input", (e) => { $("sleepOut").textContent = `${e.target.value} min`; });
 $("sleepAfterMin").addEventListener("change", (e) => set({ sleepAfterMin: +e.target.value }));

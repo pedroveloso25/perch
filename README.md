@@ -29,7 +29,9 @@ input" é descartada pelo `notify.js`: o turno já acabou, não é bloqueio.
 ### Modo pet (padrão)
 
 No ócio o pet fica na tela e tem rotina própria (`overlay/brain.js`): fica
-parado um tempo, às vezes passeia pela barra de tarefas e **dorme** quando
+parado um tempo, às vezes dá uma voltinha perto de "casa" (onde você o
+soltou por último; em Configurações dá para deixá-lo andar mais longe, até a
+barra inteira) e **dorme** quando
 você fica 2 minutos sem mexer no computador ou bloqueia a tela. Acorda quando
 você volta, quando você clica nele ou quando o Claude começa a trabalhar.
 Trabalhando, pedindo permissão ou comemorando, ele fica parado no lugar e

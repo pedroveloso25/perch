@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createBrain } = require("./brain");
+const { createBrain, roamBounds } = require("./brain");
 
 // rng determinístico: devolve a sequência dada, em loop.
 const seq = (...v) => { let i = 0; return () => v[i++ % v.length]; };
@@ -98,4 +98,24 @@ test("configure: sono mais cedo e ninguém passeia", () => {
   const c = createBrain({ rng: seq(0, 0.1, 0.9) });
   c.configure({ walkChance: 0 });
   assert.equal(run(c, 60).activity, "rest");
+});
+
+test("roamBounds: casa ± raio, cortado pela tela", () => {
+  assert.deepEqual(roamBounds(500, 60, 100, 1400), { minX: 440, maxX: 560 });
+  assert.deepEqual(roamBounds(120, 60, 100, 1400), { minX: 100, maxX: 180 });
+  assert.deepEqual(roamBounds(5000, 60, 100, 1400), { minX: 1340, maxX: 1400 });
+  assert.deepEqual(roamBounds(500, Infinity, 100, 1400), { minX: 100, maxX: 1400 });
+  assert.deepEqual(roamBounds(null, 60, 100, 1400), { minX: 100, maxX: 1400 });
+});
+
+test("raio curto: passeio curto e sempre dentro dele", () => {
+  const b = createBrain({ minWalk: 20 });
+  let x = 500;
+  for (let i = 0; i < 3000; i++) {
+    const r = b.update(0.1, { ...FLOOR, x, ...roamBounds(500, 60, 100, 1400) });
+    if (r.activity === "walk") {
+      assert.ok(r.target >= 440 && r.target <= 560, "destino " + r.target);
+      x = b.walkStep(x, 0.1);
+    }
+  }
 });

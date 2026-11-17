@@ -1,6 +1,12 @@
 const {
   app, BrowserWindow, screen, Tray, Menu, nativeImage, ipcMain, protocol, net, shell, dialog, powerMonitor,
 } = require("electron");
+
+// Um perch só: abrir de novo (atalho, autostart + clique) não cria um segundo
+// pet; a cópia que já roda mostra as configurações.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on("second-instance", () => { if (app.isReady()) openSettings(); });
+
 const fs = require("fs");
 const os = require("os");
 const { spawnSync } = require("child_process");
@@ -9,7 +15,7 @@ const { pathToFileURL } = require("url");
 const { createBody, releaseVelocity, DEFAULTS: PHYSICS } = require("./physics");
 const { createPets } = require("./pets");
 const { writeZip, readZip } = require("./zip");
-const { createBrain } = require("./brain");
+const { createBrain, roamBounds } = require("./brain");
 const claudeHooks = require("./claude-hooks");
 
 // Instalado, daemon e hooks ficam em resources/ (fora do .asar: o notify.js
@@ -67,6 +73,7 @@ let screenLocked = false;
 let brainTimer = null;
 let walkTimer = null;
 let lastActivity = null;
+let homePending = false; // soltou o pet: a casa vira onde ele parar
 
 // ---------------------------------------------------------------------------
 // Preferências (posição e gravidade)
@@ -76,6 +83,7 @@ let lastActivity = null;
 let settings = {
   gravity: true, feet: null, activePet: "default", petMode: true,
   sleepAfterMin: 2, walkiness: "normal", seededBird: false,
+  roam: "perto", home: null, // home = x dos pés onde você soltou o pet por último
 };
 try {
   settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
@@ -145,10 +153,7 @@ function stopPhysics() {
 // que tiver) até parar no chão. Sem gravidade, fica onde foi solto.
 function settle() {
   if (!win || win.isDestroyed() || dragTimer) return;
-  if (!settings.gravity) {
-    settings.feet = { x: body.x, y: body.y };
-    return saveSettingsSoon();
-  }
+  if (!settings.gravity) return settled();
   if (physTimer) return;
   let last = performance.now();
   physTimer = setInterval(() => {
@@ -161,10 +166,15 @@ function settle() {
     if (r.impact > 80) win.webContents.send("pet:landed", r.impact);
     if (r.resting) {
       stopPhysics();
-      settings.feet = { x: body.x, y: body.y };
-      saveSettingsSoon();
+      settled();
     }
   }, PHYSICS_TICK_MS);
+}
+
+function settled() {
+  settings.feet = { x: body.x, y: body.y };
+  if (homePending) { settings.home = body.x; homePending = false; }
+  saveSettingsSoon();
 }
 
 // Monitor desconectado, resolução ou barra de tarefas mudou: se os pés
@@ -176,6 +186,7 @@ function reanchor() {
   let f = feetOf();
   if (!onSomeDisplay(f)) {
     f = defaultFeet();
+    settings.home = f.x;
     win.setBounds(boundsForFeet(f.x, f.y));
   }
   body.place(f.x, f.y);
@@ -310,14 +321,17 @@ function brainTick() {
   if (!win || win.isDestroyed()) return;
   const area = areaAt(body);
   const floor = area.y + area.height;
+  if (!Number.isFinite(settings.home)) settings.home = body.x;
+  const room = roamBounds(settings.home, (ROAM[settings.roam] || ROAM.perto).radius,
+    area.x + geom.side, area.x + area.width - geom.side);
   const r = brain.update(BRAIN_TICK_MS / 1000, {
     active: settings.petMode && claudeState === "idle",
     userIdle: powerMonitor.getSystemIdleTime(),
     locked: screenLocked,
     free: !dragTimer && !physTimer && Math.abs(body.y - floor) < 1,
     x: body.x,
-    minX: area.x + geom.side,
-    maxX: area.x + area.width - geom.side,
+    minX: room.minX,
+    maxX: room.maxX,
   });
   if (r.activity !== lastActivity) {
     lastActivity = r.activity;
@@ -360,8 +374,16 @@ const WALKINESS = {
   normal: { walkChance: 0.6, restMin: 6, restMax: 20 },
   frequentes: { walkChance: 0.85, restMin: 3, restMax: 10 },
 };
+// "Até onde passeia": em volta da casa. Sem pernas, passeio longo fica
+// estranho; perto = só se ajeita no lugar, devagar.
+const ROAM = {
+  perto: { radius: 60, minWalk: 20, walkSpeed: 28 },
+  medio: { radius: 200, minWalk: 50, walkSpeed: 45 },
+  barra: { radius: Infinity, minWalk: 80, walkSpeed: 70 },
+};
 function applyBrainSettings() {
-  brain.configure({ sleepAfter: settings.sleepAfterMin * 60, ...(WALKINESS[settings.walkiness] || WALKINESS.normal) });
+  const { radius, ...roam } = ROAM[settings.roam] || ROAM.perto;
+  brain.configure({ sleepAfter: settings.sleepAfterMin * 60, ...(WALKINESS[settings.walkiness] || WALKINESS.normal), ...roam });
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +400,9 @@ function startEmbeddedDaemon() {
       .then(() => { daemonStatus = "rodando dentro do app"; })
       .catch((err) => {
         daemonStatus = err.code === "EADDRINUSE" ? "usando um daemon que já estava rodando" : "erro: " + err.message;
+        // Se o dono da porta fechar (o daemon de desenvolvimento, outro perch),
+        // assume o lugar dele: senão o pet fica surdo até reiniciar.
+        if (err.code === "EADDRINUSE") setTimeout(startEmbeddedDaemon, 10000);
       });
   } catch (err) {
     daemonStatus = "erro: " + err.message;
@@ -488,6 +513,7 @@ function configSnapshot() {
     gravity: settings.gravity,
     sleepAfterMin: settings.sleepAfterMin,
     walkiness: settings.walkiness,
+    roam: settings.roam,
     autostart: getAutostart(),
     autostartAvailable,
     claude: claudeStatus(),
@@ -510,6 +536,7 @@ function registerConfigIpc() {
     if (typeof patch?.gravity === "boolean") { settings.gravity = patch.gravity; reanchor(); }
     if (Number.isFinite(patch?.sleepAfterMin)) settings.sleepAfterMin = Math.min(60, Math.max(1, Math.round(patch.sleepAfterMin)));
     if (WALKINESS[patch?.walkiness]) settings.walkiness = patch.walkiness;
+    if (ROAM[patch?.roam]) settings.roam = patch.roam;
     if (typeof patch?.autostart === "boolean") setAutostart(patch.autostart);
     applyBrainSettings();
     saveSettings();
@@ -595,6 +622,7 @@ function registerIpc() {
     }
     drag = null;
     if (click) brain.poke();
+    else homePending = true;
     settle();
     return { click };
   });

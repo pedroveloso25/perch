@@ -363,6 +363,11 @@ async function endDrag() {
   wakeLoop();
 }
 window.addEventListener("mouseup", endDrag);
+// Botão direito no pet: menu (Esconder, Editar, Configurações, Sair).
+window.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  if (interactive && !dragging) window.overlay.petMenu();
+});
 window.addEventListener("blur", endDrag);
 
 // A janela andou (arraste): a malha sente a aceleração e balança.

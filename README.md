@@ -252,6 +252,12 @@ dá um pulinho. A física roda no main (`overlay/physics.js`, testada com
 posição e desconta a gravidade durante a queda (queda livre não deforma); o
 pouso achata. Bandeja → **Gravidade** desliga: o pet fica onde for solto.
 
+**Botão direito e esconder**
+Botão direito no pet abre um menu: **Esconder**, Editar pet, Configurações,
+Sair. Escondido, ele volta com um clique no ícone da bandeja (ou "Mostrar
+pet" no menu dela, ou abrindo o app de novo). Não é duplo clique de propósito:
+o clique simples já é o "boop" com pulinho.
+
 **Por que a posição salva é a dos pés**
 `%APPDATA%\perch\settings.json` guarda o ponto dos pés, não o canto da
 janela: o tamanho da janela muda com as imagens do pet, os pés não. Ao abrir,

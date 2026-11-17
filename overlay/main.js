@@ -5,7 +5,7 @@ const {
 // Um perch só: abrir de novo (atalho, autostart + clique) não cria um segundo
 // pet; a cópia que já roda mostra as configurações.
 if (!app.requestSingleInstanceLock()) app.exit(0);
-app.on("second-instance", () => { if (app.isReady()) openSettings(); });
+app.on("second-instance", () => { if (app.isReady()) { setHidden(false); openSettings(); } });
 
 const fs = require("fs");
 const os = require("os");
@@ -73,6 +73,7 @@ let screenLocked = false;
 let brainTimer = null;
 let walkTimer = null;
 let lastActivity = null;
+let hidden = false;      // escondido pelo menu do botão direito; volta pela bandeja
 let homePending = false; // soltou o pet: a casa vira onde ele parar
 
 // ---------------------------------------------------------------------------
@@ -139,9 +140,10 @@ function onSomeDisplay(p) {
     p.x >= d.x && p.x < d.x + d.width && p.y >= d.y && p.y <= d.y + d.height);
 }
 
+// Casa padrão: à direita, perto do relógio (o usuário arrasta para mudar).
 function defaultFeet() {
   const a = screen.getPrimaryDisplay().workArea;
-  return { x: a.x + a.width - 160, y: a.y + a.height };
+  return { x: a.x + a.width - 90, y: a.y + a.height };
 }
 
 function stopPhysics() {
@@ -325,7 +327,7 @@ function brainTick() {
   const room = roamBounds(settings.home, (ROAM[settings.roam] || ROAM.perto).radius,
     area.x + geom.side, area.x + area.width - geom.side);
   const r = brain.update(BRAIN_TICK_MS / 1000, {
-    active: settings.petMode && claudeState === "idle",
+    active: settings.petMode && claudeState === "idle" && !hidden,
     userIdle: powerMonitor.getSystemIdleTime(),
     locked: screenLocked,
     free: !dragTimer && !physTimer && Math.abs(body.y - floor) < 1,
@@ -360,6 +362,37 @@ function stopWalk() {
   walkTimer = null;
   settings.feet = { x: body.x, y: body.y };
   saveSettingsSoon();
+}
+
+// Esconder: a janela some, o resto (daemon, bandeja) continua. Não fica
+// salvo: abrir o app de novo mostra o pet.
+function setHidden(on) {
+  if (!win || win.isDestroyed() || on === hidden) return;
+  hidden = on;
+  if (on) {
+    stopWalk();
+    stopLeaveWatch();
+    win.hide();
+  } else {
+    // Escondeu com o cursor em cima (estava clicável): volta atravessável.
+    win.setIgnoreMouseEvents(true, { forward: true });
+    win.webContents.send("pet:mouse-left");
+    win.showInactive();
+  }
+  rebuildTray();
+}
+
+// Botão direito no pet.
+function popupPetMenu() {
+  if (!win || win.isDestroyed()) return;
+  Menu.buildFromTemplate([
+    { label: "Esconder", click: () => setHidden(true) },
+    { type: "separator" },
+    { label: "Editar pet…", click: openCalibrator },
+    { label: "Configurações…", click: openSettings },
+    { type: "separator" },
+    { label: "Sair", click: () => app.quit() },
+  ]).popup({ window: win });
 }
 
 function setPetMode(on) {
@@ -565,6 +598,8 @@ function registerIpc() {
     if (win && e.sender === win.webContents && typeof state === "string") claudeState = state;
   });
 
+  ipcMain.on("pet:menu", (e) => { if (win && e.sender === win.webContents) popupPetMenu(); });
+
   ipcMain.on("pet:interactive", (_e, on) => {
     if (!win) return;
     win.setIgnoreMouseEvents(!on, { forward: true });
@@ -765,6 +800,7 @@ function trayIcon() {
 function createTray() {
   tray = new Tray(trayIcon());
   tray.setToolTip("Perch");
+  tray.on("click", () => setHidden(!hidden)); // clique simples no ícone: mostra/esconde
   rebuildTray();
 }
 
@@ -774,6 +810,8 @@ function rebuildTray() {
   const active = activePet();
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      { label: hidden ? "Mostrar pet" : "Esconder pet", click: () => setHidden(!hidden) },
+      { type: "separator" },
       {
         label: "Pet",
         submenu: pets.list().map((pet) => ({

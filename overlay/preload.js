@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("overlay", {
   setInteractive: (on) => ipcRenderer.send("pet:interactive", !!on),
   dragStart: () => ipcRenderer.send("pet:drag-start"),
   dragEnd: () => ipcRenderer.invoke("pet:drag-end"),          // { click }
+  petMenu: () => ipcRenderer.send("pet:menu"),                 // botão direito
   onMouseLeft: (fn) => ipcRenderer.on("pet:mouse-left", () => fn()),
   onMoved: (fn) => ipcRenderer.on("pet:moved", (_e, p) => fn(p)),     // { x, y, g }
   onLanded: (fn) => ipcRenderer.on("pet:landed", (_e, v) => fn(v)),   // velocidade de pouso
